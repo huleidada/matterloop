@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "matterloop-agents"
+version = "0.1.0"
+description = "Model agents and DAG-based multi-agent collaboration components for MatterLoop"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "MatterLoop Contributors" }]
+dependencies = [
+    "matterloop-core>=0.1.0,<0.2.0",
+    "matterloop-memory>=0.1.0,<0.2.0",
+    "matterloop-models>=0.1.0,<0.2.0",
+    "matterloop-tools>=0.1.0,<0.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python/matterloop_agents"]

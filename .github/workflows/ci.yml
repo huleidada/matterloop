@@ -1,0 +1,85 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - run: uv sync --all-extras --dev --frozen
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy
+      - run: uv run python scripts/check_dependencies.py
+      - run: uv run coverage run -m pytest
+      - run: uv run coverage report
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+      - run: uv sync --all-extras --dev --frozen
+      - name: Build every distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in matterloop-core matterloop-models matterloop-runtime matterloop-tools matterloop-memory matterloop-policies matterloop-agents matterloop-observability matterloop-presets matterloop-integration-fastapi matterloop-integration-celery matterloop-integration-redis; do
+            uv build "$package" --out-dir "dist/$package"
+          done
+      - name: Verify every wheel in an isolated environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir wheelhouse
+          cp dist/*/*.whl wheelhouse/
+          packages=(
+            "matterloop-core:matterloop_core"
+            "matterloop-models:matterloop_models"
+            "matterloop-runtime:matterloop_runtime"
+            "matterloop-tools:matterloop_tools"
+            "matterloop-memory:matterloop_memory"
+            "matterloop-policies:matterloop_policies"
+            "matterloop-agents:matterloop_agents"
+            "matterloop-observability:matterloop_observability"
+            "matterloop-presets:matterloop_presets"
+            "matterloop-integration-fastapi:matterloop_integration_fastapi"
+            "matterloop-integration-celery:matterloop_integration_celery"
+            "matterloop-integration-redis:matterloop_integration_redis"
+          )
+          for entry in "${packages[@]}"; do
+            distribution="${entry%%:*}"
+            module="${entry##*:}"
+            wheel_prefix="${distribution//-/_}"
+            wheel="$(find wheelhouse -maxdepth 1 -name "${wheel_prefix}-*.whl" -print -quit)"
+            environment=".wheel-test-${module}"
+            uv venv "$environment" --python 3.13
+            uv pip install --python "$environment/bin/python" --find-links wheelhouse --constraint scripts/wheel-constraints.txt "$wheel"
+            "$environment/bin/python" scripts/verify_imports.py "$module"
+          done
+      - name: Verify functional extras in isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          models_wheel="$(find wheelhouse -maxdepth 1 -name 'matterloop_models-*.whl' -print -quit)"
+          observability_wheel="$(find wheelhouse -maxdepth 1 -name 'matterloop_observability-*.whl' -print -quit)"
+          uv venv .wheel-test-openai --python 3.13
+          uv pip install --python .wheel-test-openai/bin/python --constraint scripts/wheel-constraints.txt "${models_wheel}[openai]"
+          .wheel-test-openai/bin/python -c "import matterloop_models.providers, openai"
+          uv venv .wheel-test-otel --python 3.13
+          uv pip install --python .wheel-test-otel/bin/python --find-links wheelhouse --constraint scripts/wheel-constraints.txt "${observability_wheel}[otel]"
+          .wheel-test-otel/bin/python -c "import matterloop_observability, opentelemetry"

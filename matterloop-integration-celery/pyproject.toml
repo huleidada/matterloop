@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "matterloop-integration-celery"
+version = "0.1.0"
+description = "MatterLoop Celery 队列集成"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "MatterLoop Contributors" }]
+dependencies = [
+    "celery>=5.4,<6",
+    "matterloop-core>=0.1.0,<0.2.0",
+    "matterloop-runtime>=0.1.0,<0.2.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python/matterloop_integration_celery"]
+
+[project.optional-dependencies]
+dev = ["mypy>=1.10", "pytest>=8.0", "ruff>=0.5"]

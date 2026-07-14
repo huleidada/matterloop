@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "matterloop-memory"
+version = "0.1.0"
+description = "MatterLoop 记忆协议与内存实现"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["matterloop-core>=0.1.0,<0.2.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python/matterloop_memory"]

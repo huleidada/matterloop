@@ -1,0 +1,80 @@
+"""MatterLoop 供应商无关的模型协议、值对象、能力描述与注册表。"""
+
+from matterloop_models.base import (
+    MessageRole,
+    ModelClient,
+    ModelContinuation,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TokenUsage,
+    ToolCall,
+    ToolChoice,
+    ToolDefinition,
+    ToolOutput,
+)
+from matterloop_models.capabilities import (
+    CapabilityStatus,
+    ModelCapabilities,
+    ModelDescriptor,
+    ModelFeature,
+    ModelRequirements,
+)
+from matterloop_models.custom import (
+    CallableModelClient,
+    ModelCloseCallback,
+    ModelGenerateCallback,
+)
+from matterloop_models.errors import (
+    FakeModelExhaustedError,
+    ModelAlreadyRegisteredError,
+    ModelAuthenticationError,
+    ModelCapabilityError,
+    ModelError,
+    ModelInvocationError,
+    ModelNotFoundError,
+    ModelPaymentRequiredError,
+    ModelRateLimitError,
+    ModelResponseParseError,
+    ModelServiceError,
+)
+from matterloop_models.fake import FakeModelClient, ModelResponder
+from matterloop_models.registry import ModelLease, ModelRegistry, ModelRetirement
+
+__all__ = [
+    "CallableModelClient",
+    "CapabilityStatus",
+    "FakeModelClient",
+    "FakeModelExhaustedError",
+    "MessageRole",
+    "ModelAlreadyRegisteredError",
+    "ModelAuthenticationError",
+    "ModelCapabilities",
+    "ModelCapabilityError",
+    "ModelClient",
+    "ModelCloseCallback",
+    "ModelContinuation",
+    "ModelDescriptor",
+    "ModelError",
+    "ModelFeature",
+    "ModelGenerateCallback",
+    "ModelInvocationError",
+    "ModelLease",
+    "ModelMessage",
+    "ModelNotFoundError",
+    "ModelPaymentRequiredError",
+    "ModelRateLimitError",
+    "ModelRegistry",
+    "ModelRequest",
+    "ModelRequirements",
+    "ModelResponder",
+    "ModelResponse",
+    "ModelResponseParseError",
+    "ModelRetirement",
+    "ModelServiceError",
+    "TokenUsage",
+    "ToolCall",
+    "ToolChoice",
+    "ToolDefinition",
+    "ToolOutput",
+]

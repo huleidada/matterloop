@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "matterloop-integration-fastapi"
+version = "0.1.0"
+description = "MatterLoop FastAPI 路由集成"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "fastapi>=0.110,<1",
+    "matterloop-core>=0.1.0,<0.2.0",
+    "matterloop-runtime>=0.1.0,<0.2.0",
+    "pydantic>=2.7,<3",
+]
+
+[project.optional-dependencies]
+dev = ["httpx2>=2", "mypy>=1.10", "pytest>=8.0", "ruff>=0.5"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python/matterloop_integration_fastapi"]

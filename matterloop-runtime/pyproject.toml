@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "matterloop-runtime"
+version = "0.1.0"
+description = "Runtime, queue, sandbox, and lifecycle components for MatterLoop"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "MatterLoop Contributors" }]
+dependencies = ["matterloop-core>=0.1.0,<0.2.0"]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python/matterloop_runtime"]

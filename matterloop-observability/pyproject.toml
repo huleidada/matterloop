@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "matterloop-observability"
+version = "0.1.0"
+description = "MatterLoop 日志、追踪与指标组件"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["matterloop-core>=0.1.0,<0.2.0"]
+
+[project.optional-dependencies]
+otel = ["opentelemetry-api>=1.25,<2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python/matterloop_observability"]

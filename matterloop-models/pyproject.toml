@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "matterloop-models"
+version = "0.1.0"
+description = "Provider-neutral model APIs and provider adapters for MatterLoop"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "MatterLoop Contributors" }]
+dependencies = []
+
+[project.optional-dependencies]
+openai = ["openai>=1.66.0,<3.0.0"]
+dev = ["mypy>=1.10", "pytest>=8.0", "ruff>=0.5"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/python/matterloop_models"]
