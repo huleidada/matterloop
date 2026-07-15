@@ -63,6 +63,7 @@ EXTERNAL_IMPORT_DISTRIBUTIONS: dict[str, str] = {
     "celery": "celery",
     "fastapi": "fastapi",
     "httpx": "httpx",
+    "mcp": "mcp",
     "openai": "openai",
     "opentelemetry": "opentelemetry-api",
     "pydantic": "pydantic",

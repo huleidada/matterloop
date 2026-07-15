@@ -60,3 +60,46 @@ async def test_failed_replacement_keeps_old_component() -> None:
 
     assert container.get("worker") is old
     assert not old.closed
+
+
+async def test_replacing_with_same_component_is_idempotent() -> None:
+    """同一实例重复替换不能关闭当前仍注册的组件。"""
+    component = Component()
+    container: RuntimeContainer[Component] = RuntimeContainer({"worker": component})
+
+    await container.replace("worker", component)
+
+    assert container.get("worker") is component
+    assert not component.closed
+    await container.aclose()
+    assert component.closed
+
+
+async def test_unregister_during_replacement_cannot_resurrect_component() -> None:
+    """替换初始化期间的注销必须在替换后生效。"""
+    old = Component()
+    start_entered = asyncio.Event()
+    release_start = asyncio.Event()
+
+    class BlockingComponent(Component):
+        async def start(self) -> None:
+            start_entered.set()
+            await release_start.wait()
+            self.started = True
+
+    replacement = BlockingComponent()
+    container: RuntimeContainer[Component] = RuntimeContainer({"worker": old})
+
+    replace_task = asyncio.create_task(container.replace("worker", replacement))
+    await start_entered.wait()
+    unregister_task = asyncio.create_task(container.unregister("worker"))
+    await asyncio.sleep(0)
+
+    assert not unregister_task.done()
+    release_start.set()
+    await replace_task
+    await unregister_task
+
+    assert container.names() == ()
+    assert old.closed
+    assert replacement.closed

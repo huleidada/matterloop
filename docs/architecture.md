@@ -178,6 +178,17 @@ flowchart LR
 - `ShellTool` 只接受 argv，从不使用 `shell=True`；
 - `FileSystemTool` 将路径限制在 workspace 内，默认只读；
 - `HttpTool` 默认仅允许 HTTPS `GET`、显式 host allowlist、有限响应体和受控重定向。
+- `McpServerRegistry` 管理调用方注入的 MCP Session，并提供 tools、resources、resource
+  templates 和 prompts 操作；远端工具通过 `McpToolAdapter` 进入原有 `ToolRegistry`，因此继续
+  复用授权、额度和 Agent 工具循环；
+- `SkillLoader/SkillRegistry` 只安全加载专用根目录下的 `SKILL.md`；`SkillTool` 只执行
+  `list/get`，把内容标记为不可信参考数据，不执行 Skill 中的命令。
+
+MCP 保持协议定义的控制边界：tools 可以经本地授权后由模型调用，resources 由应用选择，
+prompts 由用户或控制面选择。端点、凭据、transport、OAuth 和 Session 均由宿主构造；连接热替换
+只影响新调用，旧调用通过租约完成。已发现的工具 Adapter 绑定目录令牌，连接替换后必须重新发现
+并替换 Adapter，避免旧 Schema 调用新服务。MCP 与 Skill 返回内容均可能包含提示注入或敏感数据，
+不能绕过 `ToolAuthorizer`、审批、预算和可观测性脱敏策略。
 
 ## 记忆、策略与可观测性
 

@@ -38,6 +38,7 @@ class RuntimeContainer(Generic[T]):
             name: _ComponentSlot(component) for name, component in (components or {}).items()
         }
         self._lock = asyncio.Lock()
+        self._mutation_lock = asyncio.Lock()
         self._closed = False
 
     async def register(self, name: str, component: T, *, replace: bool = False) -> None:
@@ -52,8 +53,21 @@ class RuntimeContainer(Generic[T]):
             ComponentExistsError: 同名组件存在且未允许替换。
             RuntimeClosedError: 容器已关闭。
         """
+        async with self._mutation_lock:
+            await self._register(name, component, replace=replace)
+
+    async def _register(self, name: str, component: T, *, replace: bool) -> None:
         if not name.strip():
             raise ValueError("component name must not be empty")
+        async with self._lock:
+            if self._closed:
+                raise RuntimeClosedError("runtime container is closed")
+            current_slot = self._slots.get(name)
+            if current_slot is not None and not replace:
+                raise ComponentExistsError(name)
+            if current_slot is not None and current_slot.component is component:
+                # 同一实例重复替换是幂等操作，不能退休并关闭仍在当前槽位中的对象。
+                return
         try:
             await self._start(component)
         except Exception:
@@ -63,10 +77,7 @@ class RuntimeContainer(Generic[T]):
         old_slot: _ComponentSlot[T] | None = None
         try:
             async with self._lock:
-                if self._closed:
-                    raise RuntimeClosedError("runtime container is closed")
-                if name in self._slots and not replace:
-                    raise ComponentExistsError(name)
+                # 调用方持有 mutation lock，槽位在启动阶段不会被其他变更操作改写。
                 old_slot = self._slots.get(name)
                 self._slots[name] = _ComponentSlot(component)
                 if old_slot is not None:
@@ -87,10 +98,11 @@ class RuntimeContainer(Generic[T]):
         Raises:
             ComponentNotFoundError: 目标组件不存在。
         """
-        async with self._lock:
-            if name not in self._slots:
-                raise ComponentNotFoundError(name)
-        await self.register(name, component, replace=True)
+        async with self._mutation_lock:
+            async with self._lock:
+                if name not in self._slots:
+                    raise ComponentNotFoundError(name)
+            await self._register(name, component, replace=True)
 
     async def unregister(self, name: str) -> None:
         """移除组件，并在所有旧调用结束后关闭它。
@@ -98,7 +110,7 @@ class RuntimeContainer(Generic[T]):
         Args:
             name: 需要移除的组件名称。
         """
-        async with self._lock:
+        async with self._mutation_lock, self._lock:
             slot = self._slots.pop(name, None)
             if slot is None:
                 raise ComponentNotFoundError(name)
@@ -162,7 +174,7 @@ class RuntimeContainer(Generic[T]):
 
         已在执行的调用会在退出 ``acquire`` 后关闭对应组件，关闭操作不会中断它们。
         """
-        async with self._lock:
+        async with self._mutation_lock, self._lock:
             if self._closed:
                 return
             self._closed = True

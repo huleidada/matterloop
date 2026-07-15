@@ -2,7 +2,8 @@
 
 > 跨模块生产拓扑、资源所有权与上线检查见[企业集成指南](../docs/enterprise-integration.md)。
 
-`matterloop-tools` 提供供应商无关的异步工具协议、统一注册与授权入口，以及受边界约束的文件、进程和 HTTP 工具。
+`matterloop-tools` 提供供应商无关的异步工具协议、统一注册与授权入口、MCP 客户端适配、
+本地 Skill 发现，以及受边界约束的文件、进程和 HTTP 工具。
 
 工具不会读取 `.env` 或自动继承宿主环境。内置工具以减少误用和路径/协议逃逸为目标，但不是恶意代码、恶意同机进程或不可信网络的安全隔离边界。
 
@@ -13,12 +14,19 @@ Agent / Worker
       │ name + arguments + ToolContext
       ▼
 ToolRegistry
-      ├─ ToolAuthorizer.authorize(...)
       ├─ RuntimeContainer.acquire(name)
+      ├─ ToolAuthorizer.authorize(...)
       └─ Tool.invoke(...)
-             ├─ FileSystemTool
-             ├─ ShellTool -> Sandbox
-             └─ HttpTool -> httpx transport
+             ├─ FileSystemTool / ShellTool / HttpTool
+             ├─ McpToolAdapter -> McpServerRegistry -> injected Session
+             └─ SkillTool -> SkillContextAdapter -> SkillRegistry
+
+Host / Control Plane
+      └─ McpServerRegistry
+             ├─ tools: list / call（可适配为 Tool）
+             ├─ resources: list / read
+             ├─ resource templates: list
+             └─ prompts: list / get
 ```
 
 `ToolRegistry` 的真实默认授权器是 `AllowAllToolAuthorizer`，即显式全放行。生产环境不得把“经过注册表”误解为“已经安全授权”；必须注入 `RuleBasedPermissionPolicy` 或实现自己的 `ToolAuthorizer`。
@@ -58,6 +66,8 @@ tools = ToolRegistry(
 | 授权 | `PermissionDecision`、`AllowAllToolAuthorizer` |
 | 注册表 | `ToolRegistry` |
 | 内置工具 | `FileSystemTool`、`ShellTool`、`HttpTool` |
+| MCP | `McpServerConnection`、`McpServerRegistry`、`McpToolAdapter`、`McpSdkV1SessionAdapter` |
+| Skills | `SkillLoader`、`SkillRegistry`、`SkillContextAdapter`、`SkillTool` |
 | 异常 | `ToolError`、`ToolNotFoundError`、`ToolPermissionDeniedError`、`ToolInputError`、`ToolConfigurationError` |
 
 ## 公共 DTO 与协议
@@ -67,11 +77,12 @@ tools = ToolRegistry(
 | 类型 | 字段 | 默认值与约束 |
 | --- | --- | --- |
 | `ToolSpec` | `name`、`description`、`input_schema` | 全部必填；名称和描述不得为空；Schema 顶层只读 |
-| `ToolContext` | `run_id`、`step_id`、`metadata` | `run_id` 必填非空；`step_id=None`；`metadata={}` 且顶层只读 |
+| `ToolContext` | `run_id`、`step_id`、`metadata` | `run_id` 必填非空；`step_id=None`；`metadata={}`，仅允许 JSON 兼容值并递归复制、冻结 |
 | `ToolResult` | `content`、`is_error`、`metadata` | `content` 必填；`is_error=False`；`metadata={}` 且顶层只读 |
 | `PermissionDecision` | `ALLOW`、`DENY` | 授权器必须返回枚举值；任何非 `ALLOW` 结果都被注册表拒绝 |
 
-映射只冻结顶层，嵌套值仍应被视为不可变。`ToolResult.content`、metadata 和 `ToolContext.metadata` 不会自动脱敏。
+`ToolSpec.input_schema` 与 `ToolResult.metadata` 只冻结顶层，嵌套值仍应被视为不可变；
+`ToolContext.metadata` 会递归快照并冻结。上述字段均不会自动脱敏。
 
 ### 结构协议
 
@@ -116,12 +127,263 @@ class ToolAuthorizer(Protocol):
 | `unregister` | `name` | 从新调用中移除；旧调用结束后执行可选 `aclose()` |
 | `get` | `name` | 返回当前工具，适合读取 `spec`；长调用应走 `invoke` |
 | `names` | 无 | 返回稳定排序名称 |
-| `invoke` | `name, arguments, context=` | 先授权，再借用调用期固定实例并执行 |
+| `specs` | 无 | 返回按名称排序的 `ToolSpec` 发现快照 |
+| `invoke` | `name, arguments, context=` | 先借用调用期固定实例，再针对同一参数快照授权并执行 |
 | `aclose` | 无 | 阻止新调用；立即关闭空闲工具，活跃工具在调用退出后关闭 |
 
 热替换由 `RuntimeContainer` 管理：新实例只有在 `start()` 成功后才原子换入；启动失败会尽力关闭新实例并保留旧实例。已经开始的调用继续使用旧工具，最后一个旧调用结束后才关闭旧实例。
+替换提交后的旧实例若在 `aclose()` 中抛错，该关闭错误仍可能向当前调用方传播，但新实例不会
+回滚；企业组件的关闭应保持幂等并自行上报清理失败，调用方不能把所有关闭异常解释为替换未提交。
 
-授权发生在获取工具之前。授权器应避免耗时外部调用，且必须根据调用方身份、租户、工具名、具体参数和运行上下文作出决定。注册表关闭后，Runtime 的 `RuntimeClosedError` 可能直接向上传播；它不是 `ToolError` 子类。
+工具租约覆盖授权和执行，防止同名工具在授权完成后被热替换成另一实现。注册表会递归复制并冻结
+JSON 兼容参数，再分别向授权器和工具提供等值副本；调用方并发修改原始嵌套对象不会改变本次
+决策。授权器应根据调用方身份、租户、工具名、具体参数和运行上下文作出决定。注册表关闭后，
+Runtime 的 `RuntimeClosedError` 可能直接向上传播；它不是 `ToolError` 子类。
+
+## MCP 集成
+
+MCP 集成分为稳定协议层和可选 SDK 桥接层。自定义 `McpSessionAdapter` 不需要安装额外依赖；
+使用官方 Python SDK v1 桥接器时安装：
+
+```bash
+uv add "matterloop-tools[mcp]"
+```
+
+`McpServerConnection` 不创建 stdio 子进程、HTTP 客户端、OAuth 客户端或 Session。宿主必须先
+构造并进入连接上下文，再将 Session 交给 `McpSdkV1SessionAdapter`。因此端点、请求头、代理、
+证书、凭据和进程环境始终留在组合根。
+
+### MCP 公共字段
+
+| 类型 | 字段 | 默认值与约束 | 安全与生命周期 |
+| --- | --- | --- | --- |
+| `McpLimits` | `request_timeout_seconds` | `30.0`，有限正数 | 每个业务请求独立生效 |
+| `McpLimits` | `initialize_timeout_seconds` | `15.0`，有限正数 | 限制能力协商时间 |
+| `McpLimits` | `close_timeout_seconds` | `10.0`，有限正数 | 仅关闭受托管 Session |
+| `McpLimits` | `max_pages` | `20`，正整数 | 单类完整发现的页数上限 |
+| `McpLimits` | `max_items` | `1_000`，正整数 | 单类完整发现的条目上限 |
+| `McpLimits` | `max_content_blocks` | `256`，正整数 | 单次工具、资源或 Prompt 结果的内容块上限 |
+| `McpLimits` | `max_result_characters` | `200_000`，正整数 | MCP Tool 转为 `ToolResult` 后的文本上限 |
+| `McpServerConfig` | `name` | 必填非空 | 注册表标识，不发送给远端 |
+| `McpServerConfig` | `tool_namespace` | 必填非空 | 生成模型可见工具名，避免多服务冲突 |
+| `McpServerConfig` | `limits` | `McpLimits()` | 不进入远端请求 |
+| `McpServerConfig` | `initialize_on_start` | `True` | 注册连接时执行一次 `initialize()` |
+| `McpServerConfig` | `owns_session` | `False` | 为 `True` 时连接关闭会调用 Adapter 的 `aclose()` |
+| `McpServerCapabilities` | `tools/resources/prompts/completions/logging` | 均为 `None` | `True` 表示已声明，`False` 表示初始化结果明确未声明，`None` 表示未协商并采用兼容模式 |
+| `McpContent` | `kind` | 必填枚举 | `TEXT/JSON/IMAGE/AUDIO/RESOURCE/BINARY/UNKNOWN` |
+| `McpContent` | `text/data/mime_type/uri` | 默认 `None` | 可能包含敏感远端内容，不应直接写日志 |
+| `McpContent` | `metadata` | `{}`，顶层冻结 | 不会自动脱敏或持久化 |
+| `McpToolDefinition` | `name` | 必填非空 | 原始远端名，仅适配后名称暴露给模型 |
+| `McpToolDefinition` | `description` | `""` | 远端不可信文本，会进入模型上下文 |
+| `McpToolDefinition` | `input_schema` | `{"type": "object"}` | 顶层冻结；远端和工具仍需执行参数校验 |
+| `McpToolDefinition` | `output_schema` | `None` | 仅作为声明，不替代结果验证 |
+| `McpToolDefinition` | `annotations` | `{}` | 远端提示信息，不能替代本地权限策略 |
+| `McpResourceDefinition` | `uri/name` | 必填非空 | URI 由宿主决定是否允许读取 |
+| `McpResourceDefinition` | `description/mime_type/size/metadata` | 空值或 `None` | `size` 若存在不得为负数 |
+| `McpResourceTemplateDefinition` | `uri_template/name` | 必填非空 | 参数填充与业务授权由宿主负责 |
+| `McpResourceTemplateDefinition` | `description/mime_type/metadata` | 空值、`None` 或 `{}` | 远端声明，不自动信任或持久化 |
+| `McpPromptArgument` | `name/description/required` | 名称必填；说明为空；默认非必填 | SDK v1 获取 Prompt 时参数键和值必须是字符串 |
+| `McpPromptDefinition` | `name/description/arguments` | 名称必填，其余为空 | Prompt 是远端不可信内容，不自动提升为系统指令 |
+| `McpCallResult` | `content/structured_content/is_error/metadata` | 内容为空、映射为空、`False`、映射为空 | MCP Tool Adapter 只输出标准内容与安全统计，不转发远端 metadata |
+| `McpResourceResult` | `contents/metadata` | 内容必填，metadata 为空 | 资源内容由调用方决定是否进入模型上下文 |
+| `McpPromptMessage` | `role/content` | 角色非空，内容元组必填 | 角色仍需由宿主映射到允许的模型消息角色 |
+| `McpPromptResult` | `messages/description/metadata` | 消息必填，其余为空 | 不自动写入 Agent 上下文或审计存储 |
+| `McpToolPage/McpResourcePage/McpResourceTemplatePage/McpPromptPage` | `items/next_cursor` | items 必填；cursor 默认 `None` | cursor 是远端不透明值，只由连接分页器使用 |
+| `McpCatalog` | `tools/resources/resource_templates/prompts` | 全部必填元组 | 是单个连接租约内顺序读取的目录快照 |
+
+`McpCallResult`、`McpResourceResult` 和 `McpPromptResult` 保存标准化结果；其内容不会进入
+MatterLoop checkpoint，除非调用方主动放入 Loop 输出或 metadata。`StructuralMcpResponseMapper`
+兼容 Mapping、dataclass、Pydantic 和普通属性对象；自定义 SDK 改变字段语义时应注入自己的
+`McpResponseMapper`。
+
+### MCP 操作与并发语义
+
+| 构造器 | 参数 | 默认值与所有权 |
+| --- | --- | --- |
+| `McpServerConnection` | `session` | 必填，满足 `McpSessionAdapter`；端点与凭据已由宿主配置 |
+| `McpServerConnection` | `config` | 必填 `McpServerConfig` |
+| `McpServerConnection` | `mapper` | `None`，使用 `StructuralMcpResponseMapper` |
+| `McpSdkV1SessionAdapter` | `session` | 必填且必须是已进入上下文的官方 v1 `ClientSession` |
+| `McpSdkV1SessionAdapter` | `close_callback` | `None`，默认不退出宿主 Session；显式回调幂等执行一次 |
+| `McpToolAdapter` | `caller/server_name/namespace/definition` | 全部必填；通常由 `discover_tools()` 构造 |
+| `McpToolAdapter` | `max_result_characters` | 必填正整数；结果按预算增量渲染，不先复制完整正文或 JSON |
+| `McpToolAdapter` | `max_content_blocks` | `256`，正整数；空内容块同样计数 |
+| `McpToolAdapter` | `catalog_token` | `None`；注册表发现时自动注入 | 连接被替换后让旧 Schema 适配器快速失败 |
+
+| 入口 | 操作 | 返回值 | 约束 |
+| --- | --- | --- | --- |
+| `McpServerRegistry` | `register/replace/unregister` | `None` | 新连接初始化成功后才可见；旧调用排空后关闭旧连接 |
+| `McpServerRegistry` | `list_tools` | `tuple[McpToolDefinition, ...]` | cursor 不透明；限制页数、条目数和重复 cursor |
+| `McpServerRegistry` | `discover_tools` | `tuple[McpToolAdapter, ...]` | 生成 `mcp__{namespace}__{tool}` 安全名称并检查碰撞 |
+| `McpServerRegistry` | `call_tool` | `McpCallResult` | 单次调用固定连接租约；远端工具错误保留为 `is_error` |
+| `McpServerRegistry` | `list_resources/read_resource` | 资源定义或内容 | 资源不会自动暴露为模型 Tool |
+| `McpServerRegistry` | `list_resource_templates` | 资源模板元组 | 不自动展开 URI 模板 |
+| `McpServerRegistry` | `list_prompts/get_prompt` | Prompt 定义或消息 | Prompt 不自动写入 Agent 的 developer/system 消息 |
+| `McpServerRegistry` | `catalog` | `McpCatalog` | 在一个连接租约内顺序发现已声明能力；明确未声明的类别返回空元组 |
+| `McpServerRegistry` | `aclose` | `None` | 禁止新操作，活跃操作完成后释放受托管连接 |
+
+MCP 的控制语义保持分离：tools 可以经显式授权后交给模型调用；resources 由应用选择；prompts
+由用户或控制面选择。本包不会把 resources 或 prompts 静默包装成模型工具，也不会自动响应
+sampling、elicitation 或通知回调，这些能力由宿主构造 Session 时显式处理。
+
+连接热替换会立即影响直接通过 Registry 发起的新操作；替换前已经开始的操作仍在旧连接租约内
+完成。由 `discover_tools()` 生成的 Adapter 还绑定原目录令牌：连接替换后，旧 Adapter 的新调用
+抛出 `McpCatalogStaleError`，宿主必须重新发现并在 `ToolRegistry` 中替换对应工具。这样不会用旧
+JSON Schema 静默调用契约已经变化的新服务。
+
+直接调用公共 `McpServerConnection` 时也有连接级活跃租约；`aclose()` 会先拒绝新操作，再等待
+在途的 list/call/read/get/catalog 完整退出。Registry 在此基础上再提供跨连接注册与热替换租约。
+
+### 官方 Python SDK v1 装配
+
+```python
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+from matterloop_tools import (
+    McpSdkV1SessionAdapter,
+    McpServerConfig,
+    McpServerConnection,
+    McpServerRegistry,
+    ToolRegistry,
+)
+
+params = StdioServerParameters(
+    command="/opt/mcp/bin/company-server",
+    args=["--stdio"],
+    env={},  # 由宿主显式提供，不让 MatterLoop 读取进程环境
+)
+
+async with stdio_client(params) as (read_stream, write_stream):
+    async with ClientSession(read_stream, write_stream) as session:
+        adapter = McpSdkV1SessionAdapter(session)
+        mcp_servers = McpServerRegistry()
+        await mcp_servers.register(
+            McpServerConnection(
+                adapter,
+                McpServerConfig(
+                    name="company",
+                    tool_namespace="company",
+                    owns_session=False,
+                ),
+            )
+        )
+
+        remote_tools = await mcp_servers.discover_tools("company")
+        tools = ToolRegistry(remote_tools, authorizer=company_authorizer)
+        try:
+            # 将 tools 交给 ToolCallingWorker；资源和 Prompt 通过 mcp_servers 显式访问。
+            ...
+        finally:
+            await tools.aclose()
+            await mcp_servers.aclose()
+```
+
+示例中的 `company_authorizer` 必须由应用提供。`McpSdkV1SessionAdapter` 构造时校验已安装版本为
+`mcp>=1.28.1,<2`，并把中立 cursor 转为 v1 的 `PaginatedRequestParams`。它包装的是已经进入
+异步上下文的 `ClientSession`；默认 `aclose()` 不退出原始 Session。若宿主显式传入
+`close_callback`，回调只执行一次。MCP SDK v2 不在当前公共契约内，后续应使用独立适配器，
+不能依赖 v1 适配器猜测版本。
+
+### MCP 错误边界
+
+| 异常 | 语义 |
+| --- | --- |
+| `McpConfigurationError` | 配置、SDK 版本或官方 Session 形态不兼容 |
+| `McpLifecycleError` | 连接未启动、已关闭或 Adapter 已关闭 |
+| `McpTimeoutError` | 初始化、请求或关闭超过本地硬时限 |
+| `McpTransportError` | SDK/transport 失败；异常文本不包含原始供应商消息 |
+| `McpProtocolError` | 响应缺字段或字段类型无法映射 |
+| `McpRemoteError` | 远端协议级拒绝；只保留安全错误码 |
+| `McpPaginationLimitError` | 页数、条目数或重复 cursor 触发边界 |
+| `McpResponseLimitError` | 单次工具、资源或 Prompt 内容块超过本地边界 |
+| `McpToolNameCollisionError` | 两个远端名称映射为相同的本地工具名 |
+| `McpServerNotFoundError` | 服务名称未注册 |
+| `McpCapabilityNotSupportedError` | 初始化结果明确未声明当前 tools/resources/prompts 能力 |
+| `McpCatalogStaleError` | 连接已热替换，旧工具目录必须重新发现后才能调用 |
+
+## Skills 集成
+
+Skills 子系统安全加载专用根目录下一层的 `<name>/SKILL.md`。它不搜索 HOME、用户级配置、
+Python 包入口点或环境变量，也不读取 `SKILL.md` 引用的其他文件。
+
+```text
+skills-root/
+└── code-review/
+    └── SKILL.md
+```
+
+支持的 frontmatter 是刻意受限的单行字符串子集：`name`、`description` 和 `version`。不支持
+YAML 对象、锚点、标签、多行值或任意反序列化，因此不需要 PyYAML。
+
+### Skill 公共字段
+
+| 类型 | 字段 | 默认值与约束 | 安全与持久化 |
+| --- | --- | --- | --- |
+| `SkillLoaderConfig` | `root` | 必填且必须是现有目录 | 转为绝对路径；整条现存路径拒绝符号链接 |
+| `SkillLoaderConfig` | `max_file_bytes` | `256_000`，正整数 | 读取前后都执行大小边界 |
+| `SkillLoaderConfig` | `max_skills` | `128`，正整数 | 限制单次发现数量 |
+| `SkillLoaderConfig` | `max_frontmatter_lines` | `32`，正整数 | 防止无界 frontmatter 扫描 |
+| `SkillLoaderConfig` | `max_scan_entries` | `1_024`，正整数 | 在排序前限制根目录扫描的全部条目，包括无关文件 |
+| `SkillSpec` | `name` | 1–64 个小写字母、数字、`-`、`_` | 必须等于直属目录名 |
+| `SkillSpec` | `description` | 1–500 字符 | 来自受限 frontmatter 或正文推断 |
+| `SkillSpec` | `source` | 必须为 `<name>/SKILL.md` | 仅保存相对来源，不泄露宿主绝对路径 |
+| `SkillSpec` | `version` | `None`，最长 64 字符 | 不参与代码执行或依赖解析 |
+| `SkillContent` | `spec/markdown/sha256` | 全部必填；摘要必须等于规范化 Markdown 的 UTF-8 SHA-256 | 用于审计和缓存，不代表来源可信 |
+| `SkillAccessPolicy` | `allowed_names` | 必填；空集合全部拒绝 | Agent 只能发现和读取显式允许项 |
+| `SkillAccessPolicy` | `max_content_chars` | `64_000`，正整数 | 限制一次注入模型上下文的字符数 |
+| `SkillContextBlock` | `name/description/content/sha256/version` | 来自已加载内容 | 普通参考数据，不进入系统消息 |
+| `SkillContextBlock` | `trust` | 固定 `UNTRUSTED_REFERENCE` | 提醒宿主防止权限提升与提示注入 |
+
+### Skill 生命周期与 Tool 适配
+
+| 构造器 | 参数 | 默认值与约束 |
+| --- | --- | --- |
+| `SkillLoader` | `config` | 必填 `SkillLoaderConfig` |
+| `SkillRegistry` | `skills` | `()`，初始名称不得重复 |
+| `SkillContextAdapter` | `registry/policy` | 均必填；策略不会因 registry 新增内容而自动扩权 |
+| `SkillTool` | `adapter` | 必填 `SkillContextAdapter` |
+| `SkillTool` | `name` | `"skill_reference"`，用于注册到 `ToolRegistry` |
+
+| 入口 | 行为 | 并发与失败语义 |
+| --- | --- | --- |
+| `SkillLoader.discover/load` | 安全发现或加载 UTF-8 `SKILL.md` | 同步配置阶段 I/O；任一文档失败不返回部分目录 |
+| `SkillRegistry.register/replace/unregister` | 更新不可变快照 | 读取方可继续使用旧值；新读取立即看到新值 |
+| `SkillRegistry.refresh` | 从 Loader 全量刷新 | 锁外加载全部内容，成功后一次替换；失败保留旧快照 |
+| `SkillRegistry.discover/get/names` | 读取当前快照 | 不执行磁盘 I/O |
+| `SkillContextAdapter.discover/get_context` | 应用 allowlist 和字符上限 | 未授权、过大和不存在分别抛类型化异常 |
+| `SkillTool` | `list/get` 两种只读操作 | 返回 JSON；没有 `run/execute/install` 操作 |
+
+```python
+from pathlib import Path
+
+from matterloop_tools import (
+    SkillAccessPolicy,
+    SkillContextAdapter,
+    SkillLoader,
+    SkillLoaderConfig,
+    SkillRegistry,
+    SkillTool,
+    ToolRegistry,
+)
+
+loader = SkillLoader(SkillLoaderConfig(root=Path("./company-skills")))
+skills = SkillRegistry()
+skills.refresh(loader)
+skill_tool = SkillTool(
+    SkillContextAdapter(
+        skills,
+        SkillAccessPolicy.from_names({"code-review"}),
+    )
+)
+tools = ToolRegistry((skill_tool,), authorizer=company_authorizer)
+```
+
+`SkillTool` 只返回带 `untrusted_reference` 标签的目录或正文，不解析代码块、不执行命令，也不
+递归读取引用文件。只有来源经过组织审核、版本固定且允许用于当前租户的 Skill 才应进入
+allowlist；Skill 正文仍可能包含提示注入、敏感数据或危险建议。加载器拒绝 Skill 路径中的
+符号链接、`SKILL.md` 硬链接和打开期间的 inode 替换，并同时限制文件字节、目录项、Skill 数量
+和 frontmatter 行数；专用根目录仍应只允许受信任的发布流程写入。
 
 ## `FileSystemTool`
 
@@ -260,6 +522,12 @@ shell = ShellTool(
 ## 当前限制
 
 - 没有通用 JSON Schema 执行器；自定义工具负责本地参数校验。
+- MCP SDK v1 桥接只包装宿主已进入上下文的 `ClientSession`；不构造 stdio/HTTP transport、OAuth 或自动重连。
+- MCP 的页项与内容块检查发生在 SDK 返回对象之后、Mapper 再次物化 DTO 之前；宿主仍必须在 transport/反向代理层限制入站响应体，不能把这些字段当作网络内存硬隔离。
+- MCP 目录不缓存，也不消费 `list_changed` 通知；连接替换后旧 Adapter 会快速失败，需要由宿主重新发现并替换对应工具。
+- 不实现 MCP sampling、elicitation、completion 或 task 扩展；这些回调与权限必须由宿主显式配置。
+- Skills 只读取直属 `SKILL.md`，不解析依赖、引用文件、脚本、插件入口点或远端 Skill 仓库。
+- Skills 的路径与 inode 检查不是同机恶意主体隔离边界；生产根目录仍需文件权限、只读挂载和发布审计。
 - 没有身份认证、RBAC/ABAC、人工审批 UI 或持久化审计实现。
 - `FileSystemTool` 只处理 UTF-8 文本，不提供二进制、删除、移动、目录创建或 glob。
 - `ShellTool` 不承诺恶意代码隔离，也不解析命令语义来限制危险参数。

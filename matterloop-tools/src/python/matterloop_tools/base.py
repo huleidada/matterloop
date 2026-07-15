@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from math import isfinite
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
+
+_MAX_METADATA_DEPTH = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,10 +38,13 @@ class ToolContext:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """冻结元数据，避免授权后被调用方修改。"""
+        """递归复制并冻结元数据，避免授权前后的嵌套对象竞态。"""
         if not self.run_id.strip():
             raise ValueError("run_id must not be empty")
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        frozen = _freeze_metadata_value(self.metadata, depth=0, active=set())
+        if not isinstance(frozen, Mapping):
+            raise ValueError("tool context metadata must be an object")
+        object.__setattr__(self, "metadata", frozen)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,3 +111,45 @@ class AllowAllToolAuthorizer:
         """允许当前调用；参数仅用于满足统一协议。"""
         del tool_name, arguments, context
         return PermissionDecision.ALLOW
+
+
+def _freeze_metadata_value(value: object, *, depth: int, active: set[int]) -> object:
+    """递归快照 JSON 兼容上下文元数据。"""
+    if depth > _MAX_METADATA_DEPTH:
+        raise ValueError("tool context metadata exceeds maximum nesting depth")
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise ValueError("tool context metadata must not contain non-finite numbers")
+        return value
+    if isinstance(value, Mapping):
+        identity = id(value)
+        if identity in active:
+            raise ValueError("tool context metadata must not contain cycles")
+        active.add(identity)
+        try:
+            frozen: dict[str, object] = {}
+            for key, item in value.items():
+                if not isinstance(key, str):
+                    raise ValueError("tool context metadata keys must be strings")
+                frozen[key] = _freeze_metadata_value(
+                    item,
+                    depth=depth + 1,
+                    active=active,
+                )
+            return MappingProxyType(frozen)
+        finally:
+            active.remove(identity)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        identity = id(value)
+        if identity in active:
+            raise ValueError("tool context metadata must not contain cycles")
+        active.add(identity)
+        try:
+            return tuple(
+                _freeze_metadata_value(item, depth=depth + 1, active=active) for item in value
+            )
+        finally:
+            active.remove(identity)
+    raise ValueError("tool context metadata must contain only JSON-compatible values")

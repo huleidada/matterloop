@@ -5,6 +5,7 @@ from matterloop_core import LoopStatus
 from matterloop_runtime import RunStatus
 
 from examples.enterprise.embedded_agent import run_embedded_example
+from examples.enterprise.mcp_skills_tools import run_mcp_skills_tools_example
 from examples.enterprise.queued_service import run_queued_example
 from examples.enterprise.team_collaboration import run_team_example
 
@@ -58,3 +59,18 @@ async def test_queued_example_executes_pull_worker_and_wires_external_transports
         "RedisEventPublisher",
     )
     assert result.redis_client_closed
+
+
+async def test_mcp_skills_tools_example_uses_unified_authorized_tool_registry() -> None:
+    """MCP 工具与只读 Skill 应复用同一个授权和调用入口。"""
+    result = await run_mcp_skills_tools_example()
+
+    assert result.tool_names == ("mcp__knowledge__evidence_lookup", "skill_reference")
+    assert result.resource_uri == "memory://guide"
+    assert result.resource_text == "企业指南：memory://guide"
+    assert result.resource_template == "memory://documents/{document_id}"
+    assert result.prompt_name == "summarize"
+    assert result.remote_output.startswith("MCP：已核验")
+    assert result.skill_names == ("evidence-review",)
+    assert result.skill_trust == "untrusted_reference"
+    assert result.session_closed
