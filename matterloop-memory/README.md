@@ -1,3 +1,5 @@
+简体中文 | [English](https://github.com/huleidada/matterloop/blob/main/matterloop-memory/README.en.md)
+
 # matterloop-memory
 
 `matterloop-memory` 处理两件容易被混为一谈的事：给 Agent 检索历史信息，以及给 Loop 保存恢复点。

@@ -1,3 +1,5 @@
+简体中文 | [English](https://github.com/huleidada/matterloop/blob/main/matterloop-integration-redis/README.en.md)
+
 # matterloop-integration-redis
 
 这个包把 Redis 接到 MatterLoop 的队列、运行记录和事件流。它不把 Redis 变成“万能后端”：长期

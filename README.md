@@ -1,3 +1,5 @@
+简体中文 | [English](README.en.md)
+
 <div align="center">
 
 # MatterLoop
@@ -153,14 +155,16 @@ uv run python scripts/check_dependencies.py
 uv build --all-packages
 ```
 
-Python 支持 3.10–3.14。所有公共包提供 `py.typed`；公共注释与 Google 风格 Docstring 使用中文。
-付费冒烟测试的隔离流程见 [`docs/live-deepseek.md`](docs/live-deepseek.md)。
+Python 支持 3.10–3.14。所有公共包提供 `py.typed`；公共注释与 Google 风格 Docstring 使用中文，
+公开 Markdown 同步维护简体中文和英文。付费冒烟测试的隔离流程见
+[`docs/live-deepseek.md`](docs/live-deepseek.md)。
 
 ## 文档
 
 - [架构说明](docs/architecture.md)：运行不变量、依赖边界、HITL/CAS、热替换和扩展位置。
 - [企业集成指南](docs/enterprise-integration.md)：部署拓扑、资源所有权、租户隔离、审计和上线检查。
 - [公共 PyPI 发布指南](docs/releasing.md)：可信发布配置、版本流程、验证与故障处置。
+- [文档国际化规范](docs/i18n.md)：语言文件命名、切换链接、翻译边界和契约测试。
 - [变更记录](CHANGELOG.md)：按统一版本记录 12 个发行包的用户可感知变化。
 - [离线装配示例](examples/enterprise/)：单 Agent、TeamLoop、队列服务及 MCP/Skills。
 - 各发行包 README：最小接入、关键 API、失败语义和该包的真实安全边界。

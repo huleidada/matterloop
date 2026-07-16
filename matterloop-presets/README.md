@@ -1,3 +1,5 @@
+简体中文 | [English](https://github.com/huleidada/matterloop/blob/main/matterloop-presets/README.en.md)
+
 # matterloop-presets
 
 Presets 是一组有明确取舍的组合根。它们帮你把模型、Agent、工具、策略、检查点和 Runtime 接起来，

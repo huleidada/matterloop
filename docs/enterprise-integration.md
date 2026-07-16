@@ -1,3 +1,5 @@
+简体中文 | [English](enterprise-integration.en.md)
+
 # 企业集成指南
 
 这份文档面向负责组合根、Worker 和运行基础设施的工程团队。它不重复每个类的字段，而是说明一套

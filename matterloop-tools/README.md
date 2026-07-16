@@ -1,3 +1,5 @@
+简体中文 | [English](https://github.com/huleidada/matterloop/blob/main/matterloop-tools/README.en.md)
+
 # matterloop-tools
 
 工具是 Agent 与外部世界之间的权限边界。这个包提供统一调用协议、热替换注册表、MCP 与 Skill

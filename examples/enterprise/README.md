@@ -1,3 +1,5 @@
+简体中文 | [English](README.en.md)
+
 # 离线装配示例
 
 这里的代码不是“Hello World”，而是四个可以直接运行的组合根。它们使用 Fake 或内存组件，不读

@@ -1,3 +1,5 @@
+简体中文 | [English](live-deepseek.en.md)
+
 # 运行 DeepSeek 付费冒烟测试
 
 默认测试套件完全离线。`live_deepseek` 只用于发布前确认供应商协议没有漂移，会产生真实费用，

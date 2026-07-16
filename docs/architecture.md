@@ -1,3 +1,5 @@
+简体中文 | [English](architecture.en.md)
+
 # MatterLoop 架构说明
 
 这不是发行包清单，也不是安装手册。它记录的是维护 MatterLoop 时不能随意破坏的约束：谁能修改

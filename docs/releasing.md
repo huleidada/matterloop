@@ -1,3 +1,5 @@
+简体中文 | [English](releasing.en.md)
+
 # 发布到公共 PyPI
 
 MatterLoop 由 12 个独立发行包组成。仓库采用统一版本：一次 Release 中，所有包必须使用同一个

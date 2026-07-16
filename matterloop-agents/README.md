@@ -1,3 +1,5 @@
+简体中文 | [English](https://github.com/huleidada/matterloop/blob/main/matterloop-agents/README.en.md)
+
 # matterloop-agents
 
 这个包提供两层能力：可直接注入 Core 的标准 Agent 组件，以及由中心控制器管理的 TeamLoop。两层

@@ -1,3 +1,5 @@
+简体中文 | [English](https://github.com/huleidada/matterloop/blob/main/matterloop-core/README.en.md)
+
 # matterloop-core
 
 可恢复、可审计的 Loop Engineering 内核。它负责把规划、执行、验证、人工反馈和停止条件串成一个
