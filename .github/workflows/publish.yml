@@ -148,13 +148,53 @@ jobs:
           retention-days: 30
 
   publish:
-    name: Publish to PyPI
+    name: Publish ${{ matrix.distribution }} to PyPI
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distribution: matterloop-core
+            artifact_prefix: matterloop_core
+            environment: pypi
+          - distribution: matterloop-models
+            artifact_prefix: matterloop_models
+            environment: pypi-models
+          - distribution: matterloop-runtime
+            artifact_prefix: matterloop_runtime
+            environment: pypi-runtime
+          - distribution: matterloop-tools
+            artifact_prefix: matterloop_tools
+            environment: pypi-tools
+          - distribution: matterloop-memory
+            artifact_prefix: matterloop_memory
+            environment: pypi-memory
+          - distribution: matterloop-policies
+            artifact_prefix: matterloop_policies
+            environment: pypi-policies
+          - distribution: matterloop-agents
+            artifact_prefix: matterloop_agents
+            environment: pypi-agents
+          - distribution: matterloop-observability
+            artifact_prefix: matterloop_observability
+            environment: pypi-observability
+          - distribution: matterloop-presets
+            artifact_prefix: matterloop_presets
+            environment: pypi-presets
+          - distribution: matterloop-integration-fastapi
+            artifact_prefix: matterloop_integration_fastapi
+            environment: pypi-integration-fastapi
+          - distribution: matterloop-integration-celery
+            artifact_prefix: matterloop_integration_celery
+            environment: pypi-integration-celery
+          - distribution: matterloop-integration-redis
+            artifact_prefix: matterloop_integration_redis
+            environment: pypi-integration-redis
     environment:
-      name: pypi
-      url: https://pypi.org/project/matterloop-presets/
+      name: ${{ matrix.environment }}
+      url: https://pypi.org/project/${{ matrix.distribution }}/
     permissions:
       contents: read
       id-token: write
@@ -165,13 +205,19 @@ jobs:
           name: python-distributions-${{ github.ref_name }}
           path: release-dist
 
-      - name: Remove non-distribution files
-        run: rm release-dist/SHA256SUMS
+      - name: Select this distribution's verified artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir package-dist
+          cp release-dist/${{ matrix.artifact_prefix }}-*.whl package-dist/
+          cp release-dist/${{ matrix.artifact_prefix }}-*.tar.gz package-dist/
+          test "$(find package-dist -maxdepth 1 -type f | wc -l | tr -d ' ')" = "2"
 
       - name: Publish with PyPI Trusted Publishing
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
-          packages-dir: release-dist
+          packages-dir: package-dist
           attestations: true
           print-hash: true
           skip-existing: true

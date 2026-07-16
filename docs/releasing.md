@@ -37,24 +37,40 @@ MatterLoop 由 12 个独立发行包组成。仓库采用统一版本：一次 R
 
 ### 1. 配置 GitHub Environment
 
-在 GitHub 仓库 `huleidada/matterloop` 中创建名为 `pypi` 的 Environment，并至少设置一位
-Required reviewer。发布任务进入该 Environment 后必须由维护者人工批准；普通 CI 和未经确认的 tag
-不能直接取得 PyPI 发布身份。
+PyPI 不允许两个尚未创建的项目使用完全相同的 Pending Publisher 身份。首发阶段必须让每个包的
+OIDC 声明可唯一匹配，因此 `publish.yml` 使用 12 个发布作业和下表所列 Environment。每个
+Environment 都至少设置一位 Required reviewer；普通 CI 和未经确认的 tag 不能直接取得发布身份。
 
-Environment 中不需要添加 PyPI Token。发布工作流必须拥有 `id-token: write` 权限，其余权限遵循
-最小授权原则。
+| PyPI 项目 | GitHub Environment |
+| --- | --- |
+| `matterloop-core` | `pypi` |
+| `matterloop-models` | `pypi-models` |
+| `matterloop-runtime` | `pypi-runtime` |
+| `matterloop-tools` | `pypi-tools` |
+| `matterloop-memory` | `pypi-memory` |
+| `matterloop-policies` | `pypi-policies` |
+| `matterloop-agents` | `pypi-agents` |
+| `matterloop-observability` | `pypi-observability` |
+| `matterloop-presets` | `pypi-presets` |
+| `matterloop-integration-fastapi` | `pypi-integration-fastapi` |
+| `matterloop-integration-celery` | `pypi-integration-celery` |
+| `matterloop-integration-redis` | `pypi-integration-redis` |
+
+Environment 中不添加 PyPI Token。每个发布作业只下载已经验证的统一制品，再筛选当前包的一个 wheel
+和一个 sdist；只有该作业拥有 `id-token: write`。独立身份既满足首次项目创建约束，也让单包重试和
+审计边界更清楚。
 
 ### 2. 为 12 个项目登记 Pending Publisher
 
-登录 PyPI，在“Publishing”页面为上表中的每个项目分别登记一个 Pending Publisher。12 次登记使用
-完全相同的 GitHub 信息，只有 PyPI 项目名不同：
+登录 PyPI，在“Publishing”页面为每个项目分别登记一个 Pending Publisher。Owner、Repository 和
+Workflow 相同，项目名与 Environment 使用上表中的对应值：
 
 | 字段 | 值 |
 | --- | --- |
 | Owner | `huleidada` |
 | Repository name | `matterloop` |
 | Workflow name | `publish.yml` |
-| Environment name | `pypi` |
+| Environment name | 上表中与项目对应的值 |
 
 字段必须与 GitHub 上的实际名称逐字一致。Pending Publisher 不会提前占用项目名；首次 OIDC 上传
 成功时，PyPI 才创建对应项目并将该 Publisher 转为正式配置。发布前应再次确认 12 个名称仍可用。
@@ -88,9 +104,9 @@ git tag -a v0.1.0 -m "release: v0.1.0"
 git push github main v0.1.0
 ```
 
-`publish.yml` 会以 tag 中的版本为发布边界。构建与产物检查成功后，发布任务进入 `pypi`
-Environment 等待人工批准。批准前应核对 tag、commit SHA、版本号和待上传的 12 个发行包；批准后
-才会向公共 PyPI 换取 OIDC 凭据并上传。
+`publish.yml` 会以 tag 中的版本为发布边界。构建与产物检查成功后，12 个发布作业分别进入对应
+Environment 等待人工批准。批准前应核对 tag、commit SHA、版本号和待上传的发行包；批准后每个
+作业只为自己的 PyPI 项目换取短期凭据并上传两个制品。全部发布作业成功后才执行公共索引安装验证。
 
 ## 从 PyPI 验证发布
 
@@ -127,7 +143,7 @@ python -m venv /tmp/matterloop-pypi-check
 - **构建或测试失败**：尚未上传时，修复后重新走完整检查。不要让本地构建产物绕过 GitHub
   Environment 直接上传。
 - **OIDC 被拒绝**：核对 PyPI Publisher 的 owner、repository、workflow、environment 是否精确
-  匹配，并确认任务声明了 `id-token: write` 且确实进入 `pypi` Environment。无需创建 Token
+  匹配上表，并确认任务声明了 `id-token: write` 且确实进入对应 Environment。无需创建 Token
   兜底。
 - **网络或 PyPI 临时故障**：先检查各项目的 Release files，再重跑失败任务。已经存在且哈希正确的
   文件视为成功，不应重复构建一份内容不同的同名文件。
