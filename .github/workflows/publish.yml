@@ -1,0 +1,234 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install the locked development environment
+        run: uv sync --all-extras --dev --frozen
+
+      - name: Validate the release contract
+        run: uv run python scripts/check_release.py --tag "${GITHUB_REF_NAME}"
+
+      - name: Run quality gates
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run mypy
+          uv run python scripts/check_dependencies.py
+          uv run coverage run -m pytest
+          uv run coverage report
+
+      - name: Build all distributions from the tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf release-dist
+          mkdir release-dist
+          packages=(
+            matterloop-core
+            matterloop-models
+            matterloop-runtime
+            matterloop-tools
+            matterloop-memory
+            matterloop-policies
+            matterloop-agents
+            matterloop-observability
+            matterloop-presets
+            matterloop-integration-fastapi
+            matterloop-integration-celery
+            matterloop-integration-redis
+          )
+          for package in "${packages[@]}"; do
+            uv build "${package}" --out-dir release-dist
+          done
+
+      - name: Check package metadata and artifact count
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run twine check release-dist/*
+          wheel_count="$(find release-dist -maxdepth 1 -type f -name '*.whl' | wc -l | tr -d ' ')"
+          sdist_count="$(find release-dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')"
+          test "${wheel_count}" = "12"
+          test "${sdist_count}" = "12"
+
+      - name: Verify wheels in a clean environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          uv venv .release-wheel-test --python 3.13
+          uv pip install \
+            --python .release-wheel-test/bin/python \
+            --find-links release-dist \
+            "matterloop-presets==${version}" \
+            "matterloop-integration-fastapi==${version}" \
+            "matterloop-integration-celery==${version}" \
+            "matterloop-integration-redis==${version}" \
+            "matterloop-models[openai]==${version}" \
+            "matterloop-observability[otel]==${version}" \
+            "matterloop-tools[mcp]==${version}"
+          .release-wheel-test/bin/python scripts/verify_imports.py \
+            matterloop_core \
+            matterloop_models \
+            matterloop_runtime \
+            matterloop_tools \
+            matterloop_memory \
+            matterloop_policies \
+            matterloop_agents \
+            matterloop_observability \
+            matterloop_presets \
+            matterloop_integration_fastapi \
+            matterloop_integration_celery \
+            matterloop_integration_redis
+          .release-wheel-test/bin/python -c "import mcp, openai, opentelemetry"
+
+      - name: Verify source distributions in a clean environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t sdists < <(find release-dist -maxdepth 1 -type f -name '*.tar.gz' | sort)
+          test "${#sdists[@]}" = "12"
+          uv venv .release-sdist-test --python 3.13
+          uv pip install \
+            --python .release-sdist-test/bin/python \
+            --find-links release-dist \
+            "${sdists[@]}"
+          .release-sdist-test/bin/python scripts/verify_imports.py \
+            matterloop_core \
+            matterloop_models \
+            matterloop_runtime \
+            matterloop_tools \
+            matterloop_memory \
+            matterloop_policies \
+            matterloop_agents \
+            matterloop_observability \
+            matterloop_presets \
+            matterloop_integration_fastapi \
+            matterloop_integration_celery \
+            matterloop_integration_redis
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-dist
+          sha256sum -- * > SHA256SUMS
+
+      - name: Upload the verified release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-distributions-${{ github.ref_name }}
+          path: release-dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/project/matterloop-presets/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download the verified release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: python-distributions-${{ github.ref_name }}
+          path: release-dist
+
+      - name: Remove non-distribution files
+        run: rm release-dist/SHA256SUMS
+
+      - name: Publish with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          packages-dir: release-dist
+          attestations: true
+          print-hash: true
+          skip-existing: true
+          verbose: true
+
+  verify:
+    name: Verify installation from PyPI
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out import verification script
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.13"
+          enable-cache: false
+
+      - name: Install the published packages from PyPI
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          uv venv .pypi-test --python 3.13
+          for attempt in {1..12}; do
+            if uv pip install \
+              --python .pypi-test/bin/python \
+              --index-url https://pypi.org/simple \
+              --refresh \
+              "matterloop-presets==${version}" \
+              "matterloop-integration-fastapi==${version}" \
+              "matterloop-integration-celery==${version}" \
+              "matterloop-integration-redis==${version}" \
+              "matterloop-models[openai]==${version}" \
+              "matterloop-observability[otel]==${version}" \
+              "matterloop-tools[mcp]==${version}"; then
+              break
+            fi
+            if test "${attempt}" = "12"; then
+              echo "PyPI 在等待窗口内仍未提供全部发行包" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          .pypi-test/bin/python scripts/verify_imports.py \
+            matterloop_core \
+            matterloop_models \
+            matterloop_runtime \
+            matterloop_tools \
+            matterloop_memory \
+            matterloop_policies \
+            matterloop_agents \
+            matterloop_observability \
+            matterloop_presets \
+            matterloop_integration_fastapi \
+            matterloop_integration_celery \
+            matterloop_integration_redis
+          .pypi-test/bin/python -c "import mcp, openai, opentelemetry"

@@ -29,6 +29,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.5",
     "tomli>=2; python_version < '3.11'",
+    "twine>=6.2,<7",
 ]
 
 [tool.uv]

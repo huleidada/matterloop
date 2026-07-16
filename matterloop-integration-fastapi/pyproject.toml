@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -9,12 +9,35 @@ description = "MatterLoop FastAPI 路由集成"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "MatterLoop Contributors" }]
+keywords = ["agent", "api", "fastapi", "integration", "matterloop"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
 dependencies = [
     "fastapi>=0.110,<1",
     "matterloop-core>=0.1.0,<0.2.0",
     "matterloop-runtime>=0.1.0,<0.2.0",
     "pydantic>=2.7,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/huleidada/matterloop"
+Documentation = "https://github.com/huleidada/matterloop/tree/main/docs"
+Repository = "https://github.com/huleidada/matterloop"
+Issues = "https://github.com/huleidada/matterloop/issues"
 
 [project.optional-dependencies]
 dev = ["httpx2>=2", "mypy>=1.10", "pytest>=8.0", "ruff>=0.5"]

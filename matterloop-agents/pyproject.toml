@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,14 +8,35 @@ version = "0.1.0"
 description = "Model agents and DAG-based multi-agent collaboration components for MatterLoop"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "MatterLoop Contributors" }]
+keywords = ["agent", "ai", "dag", "matterloop", "multi-agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
 dependencies = [
     "matterloop-core>=0.1.0,<0.2.0",
     "matterloop-memory>=0.1.0,<0.2.0",
     "matterloop-models>=0.1.0,<0.2.0",
     "matterloop-tools>=0.1.0,<0.2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/huleidada/matterloop"
+Documentation = "https://github.com/huleidada/matterloop/tree/main/docs"
+Repository = "https://github.com/huleidada/matterloop"
+Issues = "https://github.com/huleidada/matterloop/issues"
 
 [project.optional-dependencies]
 dev = [

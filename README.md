@@ -8,7 +8,7 @@
 [![Typing](https://img.shields.io/badge/typing-py.typed-2F855A)](https://typing.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-7C3AED)](LICENSE)
 
-[快速开始](#快速开始) · [架构](docs/architecture.md) · [企业集成](docs/enterprise-integration.md) · [离线示例](examples/enterprise/)
+[快速开始](#快速开始) · [架构](docs/architecture.md) · [企业集成](docs/enterprise-integration.md) · [发布指南](docs/releasing.md) · [离线示例](examples/enterprise/)
 
 </div>
 
@@ -48,7 +48,10 @@ flowchart LR
 ## 快速开始
 
 最短路径是使用 preset。`model_client` 是应用已经构造好的 `ModelClient`；MatterLoop 不读取密钥或
-环境变量。
+环境变量。所有发行包要求 Python 3.10 或更高版本。
+
+> 公共 PyPI 首发正在准备中。以下命令从首个公开版本成功发布到 PyPI 后可用；首发完成前请使用
+> uv workspace 运行源码。发布状态和可信发布流程见[发布指南](docs/releasing.md)。
 
 ```bash
 pip install matterloop-presets
@@ -107,7 +110,9 @@ model_client = OpenAIModelClient(
 ## 按需安装
 
 每个目录都是独立发行包，导入名使用下划线形式，例如 `matterloop-core` 对应
-`matterloop_core`。源码直接位于 `src/python/matterloop_xxx`。
+`matterloop_core`。源码直接位于 `src/python/matterloop_xxx`。从首个公开 Release 起，可以只安装
+实际使用的组件，例如 `pip install matterloop-core matterloop-models`；需要完整基础装配时安装
+`matterloop-presets`。
 
 | 层 | 发行包 | 作用 |
 | --- | --- | --- |
@@ -154,6 +159,8 @@ Python 支持 3.10–3.14。所有公共包提供 `py.typed`；公共注释与 G
 
 - [架构说明](docs/architecture.md)：运行不变量、依赖边界、HITL/CAS、热替换和扩展位置。
 - [企业集成指南](docs/enterprise-integration.md)：部署拓扑、资源所有权、租户隔离、审计和上线检查。
+- [公共 PyPI 发布指南](docs/releasing.md)：可信发布配置、版本流程、验证与故障处置。
+- [变更记录](CHANGELOG.md)：按统一版本记录 12 个发行包的用户可感知变化。
 - [离线装配示例](examples/enterprise/)：单 Agent、TeamLoop、队列服务及 MCP/Skills。
 - 各发行包 README：最小接入、关键 API、失败语义和该包的真实安全边界。
 

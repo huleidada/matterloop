@@ -22,6 +22,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy
       - run: uv run python scripts/check_dependencies.py
+      - run: uv run python scripts/check_release.py
       - run: uv run coverage run -m pytest
       - run: uv run coverage report
 
