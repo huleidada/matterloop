@@ -1,55 +1,51 @@
-# DeepSeek V4 Flash 真实闭环测试
+# 运行 DeepSeek 付费冒烟测试
 
-该测试是显式 opt-in 的付费组合测试。MatterLoop 发行包不读取环境变量；只有测试组合根读取
-`.env.local`，并由调用方构造 `openai.AsyncOpenAI` 后注入
-`matterloop_models.providers.DeepSeekChatModelClient`。供应商适配子包依赖
-`matterloop_models` 的稳定协议与 DTO，模型抽象层不会反向导入 providers。
+默认测试套件完全离线。`live_deepseek` 只用于发布前确认供应商协议没有漂移，会产生真实费用，
+也可能受到账号权限和供应商限流影响。
 
-## 1. 准备临时配置
+MatterLoop 源码不读取环境变量。下面的变量只由 pytest 组合根读取，用来创建 SDK client 和
+`TokenRateCard`，随后以普通对象注入模型适配器。
 
-每次执行前先核对 [DeepSeek 官方价格页](https://api-docs.deepseek.com/quick_start/pricing/)，
-再在仓库根目录手工创建 `.env.local`。下面是 **2026-07-14 核对的
-`deepseek-v4-flash` 示例**，单位均为每一百万 Token 的 micro-USD；它不是库内默认价格：
+## 准备一次性配置
+
+先在 [DeepSeek 官方价格页](https://api-docs.deepseek.com/quick_start/pricing/) 核对测试模型当前价格，
+再在仓库根目录创建 `.env.local`：
 
 ```dotenv
 MATTERLOOP_RUN_LIVE_DEEPSEEK=1
-DEEPSEEK_API_KEY=<临时密钥>
+DEEPSEEK_API_KEY=<一次性测试密钥>
 
-DEEPSEEK_PRICING_EFFECTIVE_DATE=2026-07-14
-DEEPSEEK_INPUT_MICROS_PER_MILLION=140000
-DEEPSEEK_OUTPUT_MICROS_PER_MILLION=280000
-DEEPSEEK_CACHE_HIT_INPUT_MICROS_PER_MILLION=2800
-DEEPSEEK_CACHE_MISS_INPUT_MICROS_PER_MILLION=140000
-DEEPSEEK_REASONING_OUTPUT_MICROS_PER_MILLION=280000
+DEEPSEEK_PRICING_EFFECTIVE_DATE=<YYYY-MM-DD>
+DEEPSEEK_INPUT_MICROS_PER_MILLION=<整数>
+DEEPSEEK_OUTPUT_MICROS_PER_MILLION=<整数>
+DEEPSEEK_CACHE_HIT_INPUT_MICROS_PER_MILLION=<整数>
+DEEPSEEK_CACHE_MISS_INPUT_MICROS_PER_MILLION=<整数>
+DEEPSEEK_REASONING_OUTPUT_MICROS_PER_MILLION=<整数>
 ```
 
-如果官方价格已变更，必须同时更新价格值和
-`DEEPSEEK_PRICING_EFFECTIVE_DATE`。测试不会猜测、下载或内置价格。
-
-限制文件权限：
+费率单位是每百万 Token 的 micro-USD。例如 1 USD 等于 1,000,000 micro-USD。不要照抄历史价格；
+测试不会下载价格或猜测缺失值。
 
 ```bash
 chmod 0600 .env.local
-```
-
-## 2. 运行
-
-```bash
 uv run --env-file .env.local pytest -m live_deepseek -s
 ```
 
-测试使用精确模型名 `deepseek-v4-flash` 和官方 OpenAI 格式端点
-`https://api.deepseek.com`。未显式启用、未配置密钥、价格或价格生效日期时，测试会跳过。
+缺少启用开关、密钥、费率或生效日期时，测试会跳过，而不是退回到无预算调用。
 
-本地硬限额为：
+## 测试会做什么
 
-- 最多 12 次模型调用，模型并发最多 2。
-- 最多 40,000 总 Token，估算费用最多 30,000 micro-USD（0.03 USD）。
-- 最多 2 个 Agent 任务和 6 次无副作用内存工具调用。
+- 运行一次“计划 → 人工修订 → 两个 Agent → 验证 → 团队审查”的完整闭环。
+- 验证低额度场景会在第二次模型调用前被本地账本阻止。
+- 强制最多 12 次模型调用、40,000 总 Token、2 个并发模型调用、2 个 Agent 任务、6 次无副作用
+  工具调用，估算费用上限为 30,000 micro-USD。
+- 标准输出只打印状态、事件、调用计数、Token 与估算费用，不打印提示词、continuation、reasoning
+  或密钥。
 
-标准输出只包含状态、事件类型、调用计数、Token 和估算费用，不包含提示词、
-`reasoning_content` 或密钥。
+这不是模型质量基准，也不会查询账户历史用量。失败时先区分协议回归、账号权限、余额、限流和
+网络问题，不要通过放宽本地硬限额来“让测试通过”。
 
-## 3. 清理
+## 收尾
 
-执行完成后删除 `.env.local`，并在 DeepSeek 平台撤销临时密钥。不要将该文件、真实密钥或付费请求快照提交到仓库。
+测试结束后删除 `.env.local`，并在供应商控制台撤销一次性密钥。不要提交该文件、真实请求快照
+或包含供应商异常正文的日志。

@@ -1,183 +1,177 @@
-# MatterLoop 企业集成指南
+# 企业集成指南
 
-本文说明 MatterLoop 各发行包在企业应用中的装配边界、运行拓扑、资源所有权和数据治理要求。
-各类型的逐字段说明位于对应发行包 README；本文只描述跨模块契约，不复制字段表。
+这份文档面向负责组合根、Worker 和运行基础设施的工程团队。它不重复每个类的字段，而是说明一套
+MatterLoop 系统上线时必须做出的选择，以及这些选择之间不能被打破的契约。
 
-## 1. 先选择组合根
+如果只想理解 Loop 如何工作，先看[架构说明](architecture.md)。可执行装配在
+[`examples/enterprise`](../examples/enterprise/)；具体构造参数在对应发行包 README。
 
-MatterLoop 不读取 `.env`、进程环境或配置中心。宿主应用是唯一组合根，负责读取配置、创建
-SDK 客户端和基础设施连接，并把已经构造好的对象注入组件。推荐按运行形态选择入口：
+## 先做三个选择
 
-| 运行形态 | 入口 | 适用场景 | 不适合 |
+### 运行在哪里
+
+| 形态 | 入口 | 适合 | 代价 |
 | --- | --- | --- | --- |
-| 嵌入式异步 | `AsyncRuntime` | FastAPI 后台任务、异步服务、测试 | 需要跨进程排队的任务 |
-| 嵌入式同步 | `LocalRuntime` | 脚本、Notebook、同步业务系统 | 在已有事件循环线程中阻塞调用 |
-| 多智能体 | `AsyncTeamRuntime` / `LocalTeamRuntime` | DAG 并行、能力路由、团队审查 | 单步骤或无需协作的简单任务 |
-| 拉取式队列 | `QueueRuntime` + `QueueBackend` | 自建 Worker、Redis 队列 | Celery 已负责消费和消息租约的系统 |
-| 推送式队列 | `QueueRuntime` + `CeleryQueueProducer` | 已有 Celery Broker/Worker | 需要调用 `lease/acknowledge/release` 的 Worker |
+| 嵌入式异步 | `AsyncRuntime` | 已有异步服务、后台任务、测试 | 进程退出会中断活跃运行，除非业务另做接管 |
+| 嵌入式同步 | `LocalRuntime` | 脚本、Notebook、同步系统 | 维护专用事件循环线程；不应放进异步请求路径 |
+| 多智能体 | `AsyncTeamRuntime` | 能拆成 DAG、需要能力路由和团队验收的任务 | 需要 TeamRepository、控制器租约和幂等 Endpoint |
+| 队列执行 | `QueueRuntime` + Worker | API 与长任务分离、跨进程扩缩容 | 需要消息租约、RunRepository CAS、持久 checkpoint 和故障恢复 |
 
-底层依赖方向固定为：
+简单任务不要为了“多 Agent”引入 TeamLoop；能在一个进程可靠完成的任务，也不必先搭队列。拓扑
+应由故障恢复与吞吐需求决定，而不是由组件数量决定。
 
-```text
-runtime       -> core
-tools         -> runtime -> core
-memory        -> core
-observability -> core
-policies      -> core + models + tools
-agents        -> core + memory + models + tools
-presets       -> agents + core + memory + models + observability + policies + runtime + tools
-integration-* -> core + runtime + 对应第三方框架
-```
+### 队列由谁持有消息
 
-`matterloop-core` 和 `matterloop-models` 是独立基础包。Core 只定义编排协议，不知道模型、工具、
-数据库或 Web 框架；models 只定义供应商无关 DTO、能力和模型事务。
+Celery 和拉取式 QueueBackend 是两个方案，不是两层队列：
 
-## 2. 三种标准拓扑
+- 已有 Celery 时，`CeleryQueueProducer` 发送 JSON DTO，Celery Worker 持有 Broker 消息。
+- 自建 Worker 时，使用 `RedisQueueBackend` 或自定义 `QueueBackend` 的
+  `lease/acknowledge/release`。
+- Celery 可以搭配 `RedisRunRepository` 与 `RedisEventPublisher`，但不能再让 Redis QueueBackend
+  消费同一个运行。
 
-### 2.1 嵌入式单 Agent
+### 哪个存储回答哪个问题
+
+| 数据 | 接口 | 回答的问题 | 不能替代 |
+| --- | --- | --- | --- |
+| Loop checkpoint | `CheckpointStore` | 计划走到哪一步，如何精确恢复 | RunRepository、长期记忆 |
+| 控制面运行记录 | `RunRepository` | 运行当前是什么状态，API 如何查询 | checkpoint |
+| Team 状态 | `TeamRepository` | DAG、任务结果、cycle 与哪个控制器持有运行 | Core checkpoint |
+| 长期记忆 | `MemoryStore` | Agent 可以检索哪些历史信息 | 任何状态机存储 |
+| 审计事件 | `EventPublisher` / `TeamEventPublisher` | 状态为何变化、事件顺序是什么 | 权威状态存储 |
+
+这些接口可以落在同一种数据库里，但要有独立 schema、权限、保留期和事务语义。Redis 集成当前不
+提供 CheckpointStore；多进程生产环境必须另行实现 revision CAS。
+
+## 两种标准部署
+
+### 嵌入式服务
 
 ```mermaid
 flowchart LR
-    A["宿主组合根"] --> B["ModelRegistry"]
-    A --> C["ToolRegistry"]
-    A --> D["MemoryStore / CheckpointStore"]
-    A --> E["Policy / EventPublisher"]
-    B --> F["Planner / Worker / Verifier"]
-    C --> F
-    D --> G["AgentLoop"]
-    E --> G
-    F --> G
-    G --> H["AsyncRuntime / LocalRuntime"]
+    App["Application composition root"] --> Models["ModelRegistry"]
+    App --> Tools["ToolRegistry + Authorizer"]
+    App --> Stores["MemoryStore + CheckpointStore"]
+    App --> Policy["Policy + UsageLedger"]
+    Models --> Agents["Planner / Worker / Verifier"]
+    Tools --> Agents
+    Agents --> Loop["AgentLoop"]
+    Stores --> Loop
+    Policy --> Loop
+    Loop --> Runtime["AsyncRuntime"]
 ```
 
-调用顺序为计划、按步骤审批、执行、独立验证和整体完成判断。`cycle` 只在重新规划时增加，
-`attempt` 在每次 Executor 调用时增加，单计划步骤数由 `max_steps_per_plan` 单独限制。人工等待
-不计入 active timeout；预算账本和累计计数不会因为暂停恢复而清零。
+应用启动时创建外部 client，再创建适配器、注册表、Agent、Loop 和 Runtime。请求只提交
+`LoopRequest`，不要在每次请求中重新创建 SDK 连接池或 `LocalRuntime` 线程。
 
-组合根必须完成以下工作：
-
-1. 创建供应商 SDK 客户端，并用 provider 适配器或自定义 `ModelClient` 包装。
-2. 把模型注册到 `ModelRegistry`；Agent 只保存模型名，调用时获取事务租约。
-3. 创建 Tool、权限策略和 `ToolRegistry`；危险工具不能依赖模型自行约束。
-4. 分别创建 `MemoryStore` 与 `CheckpointStore`，不能用长期记忆代替运行检查点。
-5. 组装 Policy、审批门、重试策略和审计 Publisher，再创建 `AgentLoop` 与 Runtime。
-6. 在应用 shutdown/lifespan 中关闭 Runtime、工具、模型 SDK 和外部连接。
-
-### 2.2 TeamLoop 多智能体
+### API 与 Worker 分离
 
 ```mermaid
 flowchart LR
-    R["TeamRequest"] --> P["TeamPlanner"]
-    P --> G["TaskGraph / DAG"]
-    G --> O["TeamOrchestrator"]
-    O --> D["AgentDirectory"]
-    D --> E1["AgentEndpoint A"]
-    D --> E2["AgentEndpoint B"]
-    E1 --> V["TaskVerifier"]
-    E2 --> V
-    V --> A["ResultAggregator"]
-    A --> W["TeamReviewer"]
-    W -->|ACCEPT| C["完成"]
-    W -->|REPLAN| P
-    W -->|REQUEST_HUMAN| H["人工反馈"]
-    H --> P
-    O --> S["TeamRepository CAS + lease"]
-    O --> Q["TeamEventPublisher"]
+    Client --> API["FastAPI"]
+    API --> Control["QueueRuntime"]
+    Control --> Runs["RunRepository / CAS"]
+    Control --> Transport{"one transport"}
+    Transport -->|"push"| Celery["Celery"]
+    Transport -->|"pull"| Queue["QueueBackend"]
+    Celery --> Worker
+    Queue --> Worker
+    Worker --> Runtime["AsyncRuntime / AsyncTeamRuntime"]
+    Runtime --> Checkpoint["CheckpointStore / CAS"]
+    Runtime --> Audit["Audit Publisher"]
 ```
 
-`TeamOrchestrator` 是唯一团队状态写入者。Agent 只能返回 `TaskResult`，不能直接修改 DAG、
-其他任务或 `TeamSnapshot`。依赖任务的结果通过 `AgentTaskContext.dependency_results` 传递；
-Mailbox 和 ArtifactStore 是可选通信出口，不能绕过控制器写全局状态。
+`QueueRuntime` 是控制面，不启动 Worker。一个拉取式 Worker 的基本顺序应固定为：
 
-生产 `TeamRepository` 必须提供跨进程 CAS 和运行级独占租约。任务结果进入 `VERIFYING` 前会先
-持久化，因此恢复验证阶段不会重新执行已经产生副作用的 Agent。内存仓储、Mailbox 和
-ArtifactStore 只适合测试与单进程开发。
+1. 取得消息租约；
+2. 用 RunRepository CAS 认领运行；
+3. 执行或恢复 Runtime；
+4. 用 CAS 写回结果；
+5. 成功则 acknowledge，可重试失败则带退避 release。
 
-### 2.3 队列生产拓扑
+拿到消息不等于获得状态写入权，CAS 成功也不能撤销已经发生的工具副作用。因此两层机制必须同时
+存在。
 
-```mermaid
-flowchart LR
-    U["调用方"] --> API["FastAPI Router"]
-    API --> QR["QueueRuntime 控制面"]
-    QR --> RP["RunRepository / CAS"]
-    QR --> QT{"选择一种任务传输"}
-    QT -->|拉取式| RB["RedisQueueBackend 或自定义 QueueBackend"]
-    QT -->|推送式| CP["CeleryQueueProducer"]
-    RB --> W1["自建 Worker"]
-    CP --> W2["Celery Worker tasks"]
-    W1 --> AR["AsyncRuntime / AgentLoop"]
-    W2 --> AR
-    AR --> CS["CheckpointStore"]
-    AR --> EP["审计 EventPublisher"]
-```
+## 组合根拥有配置和凭据
 
-Celery 与 Redis QueueBackend 不能同时作为同一次运行的任务传输：
+发行包不读取 `.env`、配置中心或进程环境。推荐启动顺序：
 
-- `RedisQueueBackend` 实现主动拉取所需的 `lease/acknowledge/release`。
-- `CeleryQueueProducer` 只负责发送 DTO，Broker 与 Celery Worker 持有消息租约。
-- `CeleryQueueBackend` 是兼容名称，仍然只是 `QueueProducer`，不能传给要求完整
-  `QueueBackend` 的 Worker。
-- Celery 场景仍可使用 `RedisRunRepository` 保存查询状态，使用 `RedisEventPublisher` 保存事件。
-- Redis 集成不提供 CheckpointStore。多进程恢复必须另外实现 Core `CheckpointStore`，并支持
-  schema v2 与 revision CAS。
+1. 从配置中心和密钥服务加载、校验配置；
+2. 创建模型 SDK、Redis/Celery、数据库、HTTP transport 和 OTel provider；
+3. 用这些 client 构造 Provider、MCP Session adapter、Store、Publisher 和 Policy；
+4. 注册模型、工具与 Agent，最后创建 Runtime；
+5. 健康检查通过后再接收流量。
 
-`QueueRuntime` 是控制面，不会消费任务或启动后台 Worker。拉取式 Worker 必须自行租用命令、
-执行 `worker_runtime`、CAS 更新 `RunRepository`，然后 acknowledge；失败时按退避策略 release。
-Celery Worker 通过 `register_tasks()` 和 `模块:无参工厂` 在每次任务中构造依赖。
+资源关闭按反序进行：停止新流量和投递，排空 Worker 与调用租约，关闭 Runtime 和注册表，最后关闭
+应用拥有的连接池与遥测 exporter。
 
-## 3. 模块集成矩阵
+| 对象 | 默认所有者 | 说明 |
+| --- | --- | --- |
+| 供应商 SDK client | 应用 | Provider 只有 `owns_client=True` 时才关闭它 |
+| `ModelRegistry` 中的客户端 | 应用 | `swap/retire` 负责排空，不替你关闭资源 |
+| Tool | `ToolRegistry` | 注册、替换、注销和关闭会管理 Tool 生命周期 |
+| Runtime `resources` | Runtime | 只关闭构造时明确列出的对象 |
+| Redis/Celery/数据库 client | 应用 | 集成适配器不会接管共享连接池 |
+| 单次 Celery Worker 依赖 | Worker 工厂返回的 closer | 每次任务结束时关闭 |
 
-| 模块 | 上游输入 | 下游输出 | 生产替换点 |
-| --- | --- | --- | --- |
-| core | Planner、Executor、Verifier、策略、Store、Publisher | `LoopResult`、checkpoint、事件 | 所有协议均可替换 |
-| models | 调用方构造的 SDK client、`ModelRequest` | 归一化 `ModelResponse` | Provider、自定义 `ModelClient` |
-| runtime | Loop engine、队列/仓储、资源 | 异步/同步/队列门面 | QueueBackend、RunRepository、Sandbox |
-| tools | Tool、Authorizer、MCP Session、Skill 根目录 | `ToolResult`、MCP 目录、Skill 参考块 | 权限策略、Session Adapter、Sandbox、网络边界 |
-| memory | 长期记忆与 checkpoint 输入 | 检索结果或 LoopContext | 持久化 MemoryStore/CheckpointStore |
-| policies | Context、usage scopes、显式价格表 | 决策、预留、结算、额度异常 | 组织级规则与计费系统 |
-| agents | ModelRegistry、ToolRegistry、MemoryStore | Planner/Executor/Verifier/Team 结果 | Agent、调度器、Reviewer |
-| observability | Core 生命周期事件 | 日志、Trace、Metric、审计写入 | SIEM、OTel exporter、审计仓储 |
-| presets | 显式模型和基础设施对象 | 已装配 Runtime | 企业组合根通常在 preset 外再加策略 |
-| FastAPI | Direct/Queue Runtime、鉴权依赖 | `/create`、`/list`、详情、控制和事件路由 | 企业鉴权、限流、审计中间件 |
-| Celery | Celery app、共享仓储、Worker 工厂 | JSON 任务与幂等 Worker 处理 | Broker、结果状态仓储 |
-| Redis | 外部 async Redis client | 队列、RunRepository、事件流 | Cluster、ACL、备份和清理策略 |
+热替换时必须先启动新实例，再切流，让旧租约排空后关闭旧实例。不要把“关闭旧实例失败”直接解释
+成“替换没有发生”；先查询注册表当前状态。
 
-## 4. 配置、密钥与资源所有权
+## 身份、租户和数据边界
 
-发行包不会读取配置源。建议宿主按以下顺序启动：
+认证只证明调用者是谁，授权还要回答“能否访问这个 run、工具和资源”。建议从可信 Principal 派生
+`tenant_id` 与 usage scope，并在以下入口重复校验：
 
-1. 读取配置中心和密钥服务，校验租户、模型、工具和预算配置。
-2. 创建网络客户端、数据库连接池、Redis/Celery 对象和 OTel provider。
-3. 创建 provider 适配器、MCP Session/Adapter、Skill allowlist、Store、Publisher、Policy、Agent 和 Runtime。
-4. 新实例完全启动后再暴露流量；热替换时让旧租约排空后关闭旧实例。
+- FastAPI 的 create/get/list/cancel/resume/events；
+- ToolAuthorizer 的每次参数级决策；
+- Memory、checkpoint、RunRepository 与 TeamRepository 的 namespace；
+- MCP resource、prompt 和 tool 调用；
+- 人工响应的 interaction 与 run 所有权。
 
-关闭顺序与启动相反。`ModelRegistry` 不拥有模型 SDK；`swap()/retire()` 只等待旧事务排空。
-ToolRegistry 和 Runtime 只关闭明确登记为资源的实例。Redis 适配器不会替宿主关闭共享 client。
-Celery 的 `closer` 只关闭 Worker 工厂为当前任务创建的资源。
+`run_id`、`namespace` 和 metadata 都不是授权凭据。不要接受客户端任意指定 tenant namespace，也
+不要把邮箱、订单正文或访问令牌编码进 run ID。
 
-模型 API key、Redis 凭据、Cookie 和 Authorization 不能进入 `metadata`、日志、错误文本、
-事件或检查点。provider 的 continuation 使用 `repr=False`，但普通消息、输出和 metadata 不会
-自动脱敏，仍需在组合根控制数据内容。
+模型消息、工具输出、人工反馈、事件和 checkpoint 可能包含业务秘密。API key、Cookie、
+Authorization 和数据库凭据不得进入这些数据结构。Provider continuation 虽然不会显示在 repr，
+仍然只能留在当前模型事务，不可持久化。
 
-## 5. 并发、幂等和恢复
+## 工具与外部内容的威胁模型
 
-| 机制 | 稳定键 | 并发要求 | 冲突处理 |
-| --- | --- | --- | --- |
-| Core checkpoint | `run_id + revision` | Store 必须原子 CAS | 抛 `CheckpointConflictError`，重新读取最新状态 |
-| 人工响应 | `interaction_id + idempotency_key` | 相同内容可重复提交 | 同键不同内容抛冲突异常 |
-| RunRepository | `run_id + version` | `compare_and_set` 原子执行 | 失败方读取最新记录，不覆盖成功写入 |
-| TeamRepository | `run_id + version + owner lease` | 单运行只能有一个控制器 | 活跃租约拒绝重复执行 |
-| 模型热替换 | registry name + lease | 旧事务固定旧客户端 | 新事务立即使用新客户端 |
-| Celery 任务 | 确定性 task id + RunRecord CAS | 消息可重复投递 | 已结算或已认领记录返回 duplicate |
+| 入口 | 已有防线 | 仍需部署方处理 |
+| --- | --- | --- |
+| `ToolRegistry` | 调用期租约、参数快照、Authorizer 接口 | 默认 Authorizer 全放行；需要身份、租户和参数策略 |
+| `FileSystemTool` | root、路径解析、符号链接检查、大小限制 | 同机 TOCTOU、硬链接、权限主体、磁盘配额 |
+| `ShellTool` | argv、程序白名单、空环境、超时与输出限制 | 参数语义、网络/系统调用、进程树、恶意代码隔离 |
+| `HttpTool` | HTTPS、host/method allowlist、逐跳重定向检查 | DNS rebinding、私网 CIDR、端口、出口和 TLS 身份 |
+| MCP | Session 注入、能力协商、分页/内容边界、目录令牌 | transport body 上限、OAuth、远端信任、sampling/elicitation |
+| Skills | 只读、allowlist、路径/inode/大小检查 | 来源审核、只读挂载、版本发布和提示注入治理 |
 
-Core schema v2 checkpoint 保存人工交互、反馈历史、event sequence 和 revision；v1 会被拒绝。
-`APPROVE` 精确继续当前步骤且不再次调用审批门；`REVISE` 与 `PROVIDE_INPUT` 保存历史并触发
-重新规划；`REJECT` 进入结构化阻塞。恢复不会重置 cycle、Token 或费用预算。
+来自网页、文件、MCP resource、Prompt 或 Skill 的内容都应作为不可信参考，不能改变系统权限、审批
+规则或预算。`LocalProcessSandbox` 不是恶意代码安全边界；高风险执行要换成容器、虚拟机或远程
+Sandbox。
 
-## 6. 计算额度
+## 并发与幂等
 
-`UsageLedger` 以整数和原子临界区管理模型调用、并发、Token、费用、工具调用、Agent 任务和
-Executor 尝试。一次调用可同时写入例如：
+| 边界 | 竞争键 | 正确处理 |
+| --- | --- | --- |
+| Core 恢复/人工响应 | `run_id + revision` | CAS 失败后重新读取，不覆盖最新 checkpoint |
+| 队列状态 | `run_id + version` | Worker 只提交自己认领的版本 |
+| Team 控制器 | `run_id + version + owner lease` | 活跃租约拒绝第二个控制器；副作用带 fencing/幂等键 |
+| 人工反馈 | `interaction_id + idempotency_key` | 同键同内容 no-op，同键不同内容冲突 |
+| 模型/工具热替换 | registry name + invocation lease | 旧事务固定旧实例，新事务使用新实例 |
+| Celery 重投 | deterministic task id + RunRecord CAS | task id 用于诊断，CAS 才是执行认领依据 |
+
+所有外部副作用都应使用稳定的业务幂等键，可由 run/task/step 组成。`attempt` 只用于审计；除非每次
+尝试本来就应产生独立副作用，否则不要把它纳入去重键。数据库状态 CAS 只能阻止旧结果覆盖，无法
+撤回已经发出的邮件、付款或网络请求。
+
+当前 Redis Queue、Celery 运行认领和 TeamRepository 协议都没有通用 heartbeat/renew。租约必须覆盖
+端到端最坏执行时间与时钟漂移；超长任务需要扩展续租或拆分任务。
+
+## 预算必须在调用前生效
+
+`UsageLedger` 的 reserve/commit/rollback 用来阻止并行调用一起穿透额度。建议同时设置组织、租户、
+运行、任务和 Agent scope：
 
 ```text
 organization:acme
@@ -187,66 +181,58 @@ task:task-id
 agent:agent-id
 ```
 
-包装器在调用前对全部 scope 执行 `reserve`，成功后按实际用量 `commit`，调用未发生时
-`rollback`。任何 scope 超限都不会产生部分预留。供应商已经返回但响应解析失败且携带 usage 时，
-实际用量仍会结算。费用必须使用调用方显式提供、带币种与生效日期的 `TokenRateCard`；库不内置
-供应商价格。
+在组件注册前包裹 `BudgetedModelClient`、`BudgetedTool`、`BudgetedExecutor` 与
+`BudgetedAgentEndpoint`。费用需要应用提供带币种和生效日期的 `TokenRateCard`；MatterLoop 不内置
+价格，也不查询供应商账单。
 
-production preset 不会自动包裹模型、工具或 Agent，也不会自动启用费用上限。企业组合根必须在
-注册组件前显式应用 `BudgetedModelClient`、`BudgetedTool`、`BudgetedExecutor` 或
-`BudgetedAgentEndpoint`。
+`UsageLedger` 是进程内原子账本。多个 Worker 共享硬额度时，应在这些包装器外接集中式原子预留
+服务，或把额度静态切分给 Worker。当前包没有分布式账本实现，production preset 也不补这一层。
 
-## 7. 安全与数据治理
+## 审计不是普通日志
 
-- FastAPI 的 `auth_dependency` 是必填项；认证后仍需由宿主执行租户授权和对象级访问控制。
-- `RuleBasedPermissionPolicy` 默认拒绝，未配置 ToolAuthorizer 的 ToolRegistry 则等价于全放行。
-- ShellTool 只接受 argv 且不使用 `shell=True`，但不是恶意代码沙箱。
-- FileSystemTool 阻止词法和解析后的路径逃逸，但不能消除同机对手造成的 TOCTOU 风险。
-- HttpTool 的 HTTPS/host allowlist/重定向限制不能替代 egress firewall、DNS 策略或完整 SSRF 防护。
-- MCP transport、OAuth 和凭据由宿主构造；远端工具描述、资源、Prompt 和结果均视为不可信输入。
-- MCP 连接替换后必须重新发现工具；目录令牌会拒绝旧 Schema Adapter 的新调用。
-- SkillTool 只读不等于内容可信；Skill 必须经过来源审核、版本固定、租户 allowlist 和提示注入治理。
-- Redactor 按映射键递归脱敏，不扫描自由文本、模型输出或异常堆栈。
-- LoopEvent 与 TeamEvent 可能携带目标、输出、人工反馈和 Snapshot；外部审计存储必须配置 ACL、
-  加密、保留期、删除和容量策略。
-- `LocalProcessSandbox` 只限制 cwd、环境、超时和输出量；不承诺内核、容器或虚拟机级隔离。
+Core 先 CAS 保存 checkpoint，再发布带连续 sequence 的事件。这样事件对应的状态已经存在，但两者
+没有跨系统事务：checkpoint 成功后 Publisher 仍可能失败。不可丢失审计需要宿主扩展统一的
+状态与 Outbox 持久化边界，或检测并补偿 sequence 缺口；只替换 Publisher 不够。
 
-## 8. 可观测性与失败策略
+`LOG_AND_CONTINUE` 适合可丢失遥测；合规审计通常选择 `RAISE`。Redactor 只按映射键过滤敏感字段，
+不会扫描自由文本、模型输出或异常堆栈。日志中建议只保留 run/task/step、tenant、revision/version、
+状态、停止原因和用量计数。
 
-开发环境可用 `LOG_AND_CONTINUE` 防止辅助日志影响主流程；合规审计场景应使用 `RAISE`，让审计
-写入失败阻止状态继续推进。OTel provider、采样、exporter 和后端由宿主配置，MatterLoop 只创建
-span/metric 处理器。
+OpenTelemetry 的 Provider、Exporter、采样与资源属性由应用配置。Team 事件会携带完整 Snapshot，
+写入 SIEM 或 Trace 前要评估体积、基数与敏感字段。
 
-推荐统一记录以下非敏感关联字段：`run_id`、`team_run_id`、`task_id`、`step_id`、`tenant_id`、
-`event_sequence`、`revision/version`、`status`、`stop_reason` 和 usage scope。不要记录提示词、
-continuation、reasoning、凭据或未经分级的完整输出。
+## 故障演练
 
-## 9. 当前 HTTP 与基础设施限制
+上线前不要只跑“成功路径”。至少验证：
 
-- FastAPI 集成当前没有提交 `HumanResponse` 的路由，`RunResponse` 也不包含 pending interaction；
-  完整 HITL 目前只能使用 Python Core/Team API，不能在文档中宣称 HTTP 已完整支持。
-- Redis 队列没有租约续期 API；租约长度必须覆盖正常处理时间，长任务应由宿主提供续期实现。
-- Redis 集成没有 TTL、归档或清理 API，也不提供 checkpoint、长期记忆或 Worker。
-- Celery Worker 的运行认领没有续租，`claim_lease_seconds` 必须大于最长正常任务时长。
-- InMemoryQueueBackend、InMemoryRunRepository、InMemoryCheckpointStore 和 InMemoryTeamRepository
-  只适合测试或单进程开发。
-- production preset 返回控制面与 worker runtime，但不会启动消费循环、处理 ack/release 或部署
-  Web/Worker 进程。
+| 故障 | 期望结果 |
+| --- | --- |
+| Worker 在工具副作用后、状态提交前崩溃 | 消息可重投但不能静默重放副作用；工具幂等去重，部署策略识别并处置活跃 checkpoint（Core 不自动接管） |
+| 两个请求同时提交人工反馈 | 一个 revision CAS 成功；另一个得到幂等 no-op 或冲突 |
+| 模型/工具热替换时仍有长调用 | 旧调用完成，新调用使用新实例，旧资源随后关闭 |
+| 审计后端不可用 | 按选定策略阻止推进或明确告警，不静默丢失 |
+| 租约早于任务结束 | fencing/幂等机制阻止重复副作用，或测试明确失败暴露配置错误 |
+| 任一父子 scope 预算耗尽 | 调用发生前抛硬限额错误，不进入无意义重试 |
+| checkpoint/事件 payload 损坏或版本未知 | 严格拒绝，不使用“尽力解析”推进状态机 |
 
-## 10. 示例与上线检查
+## 当前缺口
 
-可运行离线示例位于 [`examples/enterprise`](../examples/enterprise/)：
+- FastAPI 集成没有提交 `HumanResponse` 的路由，也不返回 pending interaction；完整 HTTP HITL 需要
+  应用补充受鉴权端点。
+- Redis 集成没有 checkpoint、长期记忆、Worker、租约续期、TTL 或清理 API。
+- Celery 运行认领没有续租；claim lease 必须大于正常最长任务时间。
+- 内存 Store、Queue、Repository、UsageLedger 和 TeamRepository 只适合测试或单进程运行。
+- production preset 返回控制面与 worker runtime，但不会启动消费循环或部署进程。
+- 本地 Sandbox 不提供恶意代码隔离。
 
-- `embedded_agent.py`：单 Agent、工具、记忆、人工修订、预算和审计事件。
-- `team_collaboration.py`：DAG fan-out/fan-in、团队审查、人工反馈和多 scope 额度。
-- `queued_service.py`：FastAPI 控制面、拉取式 Worker，以及 Celery/Redis 两种互斥接线方式。
-- `mcp_skills_tools.py`：注入式 MCP tools/resources/templates/prompts、Skill allowlist 和统一 ToolRegistry。
+## 上线清单
 
-上线前至少确认：
-
-- 所有基础设施实现都通过 CAS、幂等、租约过期和故障恢复测试。
-- 每个外部 I/O 都有组件级超时、重试上限和取消传播。
-- 模型、工具、Agent、Token 和费用均配置组织与租户级硬上限。
-- 审计写入失败策略、数据分级、脱敏、加密、保留和删除策略已经评审。
-- 应用 lifespan/Worker shutdown 会等待活跃租约排空并关闭自有资源。
-- 默认离线测试、Ruff、mypy、wheel/sdist 和干净环境导入检查全部通过。
+- [ ] 每个外部 I/O 都有超时、有限重试和取消传播。
+- [ ] checkpoint、RunRepository 和 TeamRepository 的 CAS 已通过真实后端并发测试。
+- [ ] 队列租约、claim lease、Runtime timeout 与 Broker visibility timeout 已统一校准。
+- [ ] 工具、Endpoint 和业务副作用都有稳定幂等键。
+- [ ] 模型、Token、费用、工具、attempt 和 Agent 任务配置了父子 scope 硬上限。
+- [ ] 身份被绑定到 run、namespace、MCP 资源和人工交互，而不只是通过认证。
+- [ ] 事件失败策略、Outbox/补偿、脱敏、加密、保留和删除已经评审。
+- [ ] shutdown 会停止新流量、排空租约，并关闭应用拥有的连接池。
+- [ ] 离线测试、Ruff、mypy、依赖边界、wheel/sdist 和干净环境导入全部通过。

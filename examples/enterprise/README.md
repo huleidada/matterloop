@@ -1,7 +1,7 @@
-# MatterLoop 企业离线示例
+# 离线装配示例
 
-这四个示例只使用 Fake/内存组件，不读取环境变量、不需要密钥，也不连接模型、Redis、Celery
-Broker 或其他外部服务。它们只通过各发行包的公共 API 装配，可作为企业组合根的可执行参考。
+这里的代码不是“Hello World”，而是四个可以直接运行的组合根。它们使用 Fake 或内存组件，不读
+环境变量、不需要密钥，也不会连接模型服务、Broker 或 Redis。
 
 ```bash
 uv run python -m examples.enterprise.embedded_agent
@@ -10,17 +10,25 @@ uv run python -m examples.enterprise.queued_service
 uv run python -m examples.enterprise.mcp_skills_tools
 ```
 
-| 示例 | 覆盖链路 | 离线替身 | 生产必须替换 |
-| --- | --- | --- | --- |
-| `embedded_agent.py` | FakeModel → Registry → Agent → Tool → Core → AsyncRuntime；暂停、修订、恢复、预算和审计 | FakeModel、内存记忆、内存 checkpoint、无副作用证据工具 | 供应商客户端、持久化 checkpoint、权限和审计 Publisher |
-| `team_collaboration.py` | TeamPlanner → DAG fan-out/fan-in → AgentDirectory → Verifier → Reviewer → HITL | 确定性 Agent、内存 TeamRepository、内存事件 | 跨进程 CAS/lease 仓储、持久审计和受控 ArtifactStore |
-| `queued_service.py` | FastAPI → QueueRuntime → lease/CAS → Worker → ack；Celery 与 Redis 两种接线 | 内存拉取队列、内存 RunRepository、记录型 Celery、禁止 I/O 的 Redis client | 只能选择一种任务传输；持久 RunRepository、CheckpointStore、审计、租约与清理策略 |
-| `mcp_skills_tools.py` | MCP Session → MCP Registry → Tool Adapter → ToolRegistry；Skill Registry → SkillTool | 内存 MCP Session、不可变 Skill 内容 | 受控 transport/OAuth、正式 MCP Server、审核后的 Skill 根目录、租户权限与审计 |
+## 从哪个示例开始
 
-`queued_service.py` 中的完整拉取流程使用 `InMemoryQueueBackend` 执行，是为了让 CI 可以验证
-lease、CAS、Worker 和 acknowledge 的顺序。Celery 分支只验证 DTO 投递和任务注册；Redis 分支
-只验证三个适配器共享宿主 client，任何 Redis 命令都会立即失败，防止示例意外联网。
+| 你要解决的问题 | 示例 | 建议重点阅读 |
+| --- | --- | --- |
+| 在现有 Python 服务里运行一个可恢复 Agent | [`embedded_agent.py`](embedded_agent.py) | Runtime 装配、人工修订、预算与审计 |
+| 把任务拆给多个 Agent 并做团队验收 | [`team_collaboration.py`](team_collaboration.py) | DAG、能力路由、fan-out/fan-in、Reviewer |
+| 把 API 控制面与 Worker 分开 | [`queued_service.py`](queued_service.py) | lease、CAS、ack，以及 Celery/Redis 二选一 |
+| 接入 MCP Server 和受控 Skill | [`mcp_skills_tools.py`](mcp_skills_tools.py) | Session 注入、工具授权、资源与 Prompt 的边界 |
 
-示例不会展示真实凭据加载方式。企业应用应在自己的组合根中读取配置中心或密钥服务，构造好
-SDK/Redis/Celery 客户端后再注入 MatterLoop，并在应用 lifespan 或 Worker shutdown 中关闭自有
-资源。
+每个示例都故意把依赖构造写在一起。生产项目通常会把它们放入 FastAPI lifespan、Worker 启动钩子
+或自己的依赖注入容器，但资源所有权和关闭顺序应保持清晰。
+
+## 替换离线组件
+
+- `FakeModelClient` 换成 `matterloop_models.providers` 中的供应商适配器，SDK 客户端仍由应用创建。
+- 内存 checkpoint、TeamRepository 和 RunRepository 换成带持久化、CAS、租约和备份的实现。
+- 示例工具换成真实工具前，先接入 `ToolAuthorizer`、租户权限和审计；不要直接放开 Shell 或网络。
+- Celery 是推送式任务传输，Redis `QueueBackend` 是拉取式任务传输。一个运行只选择其中一种。
+- Redis 示例 client 会拒绝任何真实 I/O；它只用于验证装配关系，不能当成部署模板。
+
+凭据加载属于宿主应用。请从配置中心或密钥服务取得凭据，构造外部客户端后注入 MatterLoop，并在
+应用 shutdown 中关闭这些客户端。
