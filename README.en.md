@@ -11,7 +11,7 @@
 [![Typing](https://img.shields.io/badge/typing-py.typed-2F855A)](https://typing.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-7C3AED)](LICENSE)
 
-[Quick start](#quick-start) · [Architecture](docs/architecture.en.md) · [Enterprise integration](docs/enterprise-integration.en.md) · [Release guide](docs/releasing.en.md) · [Offline examples](examples/enterprise/README.en.md)
+[Installation](#installation) · [Quick start](#quick-start) · [Architecture](docs/architecture.en.md) · [Enterprise integration](docs/enterprise-integration.en.md) · [Offline examples](examples/enterprise/README.en.md)
 
 </div>
 
@@ -58,18 +58,131 @@ flowchart LR
 - **Multi-Agent work remains controlled**: a central Orchestrator drives DAG fan-out/fan-in, and Agents cannot mutate
   global state directly.
 
-## Quick start
+## Installation
 
-The shortest path is a preset. `model_client` is a `ModelClient` already constructed by the application; MatterLoop
-does not read credentials or environment variables. Every distribution requires Python 3.10 or later.
+MatterLoop publishes 12 independent Python distributions to the
+[public PyPI index](https://pypi.org/search/?q=matterloop-). Regular users do not need to clone this repository,
+install uv, or build wheels locally. The root workspace is not an installable aggregate package either: this project
+does not publish a `matterloop` meta-distribution. Install `matterloop-presets` or the specific components required by
+your application. Every distribution supports Python 3.10–3.14.
 
-> `v0.1.0` is available on public PyPI. All 12 distributions provide a wheel, an sdist, and Trusted Publishing
-> attestations. See the [GitHub Release](https://github.com/huleidada/matterloop/releases/tag/v0.1.0) for the release
-> record.
+### Install from public PyPI
+
+For an out-of-the-box composition, install `matterloop-presets`. The artifact resolver pulls Core, Models, Runtime,
+Tools, Memory, Policies, Agents, and Observability. It does not install FastAPI, Celery, Redis, or optional SDKs:
 
 ```bash
-pip install matterloop-presets
+# Application development: accept compatible updates in the 0.1 series
+python -m pip install --index-url https://pypi.org/simple \
+  "matterloop-presets>=0.1.0,<0.2.0"
+
+# Production and CI: pin an artifact version that you have validated
+python -m pip install --index-url https://pypi.org/simple \
+  "matterloop-presets==0.1.0"
 ```
+
+All 12 `v0.1.0` distributions provide a wheel, an sdist, and Trusted Publishing attestations. See the
+[GitHub Release](https://github.com/huleidada/matterloop/releases/tag/v0.1.0) for the corresponding release record.
+Install into a virtual environment and use `python -m pip` so the artifacts go to the intended Python interpreter.
+
+### Install components on demand
+
+Installation uses hyphenated distribution names; Python uses underscored import names. Every distribution below can
+be pulled directly from PyPI, and pip resolves its declared MatterLoop dependencies automatically.
+
+| Capability | PyPI distribution | Python import | When to install it |
+| --- | --- | --- | --- |
+| Loop kernel | [`matterloop-core`](https://pypi.org/project/matterloop-core/) | `matterloop_core` | Implement your own Planner, Executor, and Verifier |
+| Model abstraction | [`matterloop-models`](https://pypi.org/project/matterloop-models/) | `matterloop_models` | Model DTOs, Registry, and custom or built-in provider adapters |
+| Runtime | [`matterloop-runtime`](https://pypi.org/project/matterloop-runtime/) | `matterloop_runtime` | Async, synchronous, and queue facades plus local process limits |
+| Tools | [`matterloop-tools`](https://pypi.org/project/matterloop-tools/) | `matterloop_tools` | ToolRegistry, filesystem, Shell, HTTP, MCP, and Skills |
+| Memory | [`matterloop-memory`](https://pypi.org/project/matterloop-memory/) | `matterloop_memory` | Long-term memory protocols and single-process in-memory checkpoints |
+| Policies | [`matterloop-policies`](https://pypi.org/project/matterloop-policies/) | `matterloop_policies` | Budgets, retries, stopping, approval, and permissions |
+| Agents | [`matterloop-agents`](https://pypi.org/project/matterloop-agents/) | `matterloop_agents` | Single-Agent roles and TeamLoop DAG collaboration |
+| Observability | [`matterloop-observability`](https://pypi.org/project/matterloop-observability/) | `matterloop_observability` | Structured logging, tracing, and metrics |
+| Presets | [`matterloop-presets`](https://pypi.org/project/matterloop-presets/) | `matterloop_presets` | Install every foundation module and use preset compositions |
+| FastAPI | [`matterloop-integration-fastapi`](https://pypi.org/project/matterloop-integration-fastapi/) | `matterloop_integration_fastapi` | HTTP control-plane routes |
+| Celery | [`matterloop-integration-celery`](https://pypi.org/project/matterloop-integration-celery/) | `matterloop_integration_celery` | Celery push-based task transport |
+| Redis | [`matterloop-integration-redis`](https://pypi.org/project/matterloop-integration-redis/) | `matterloop_integration_redis` | Redis pull queue, run repository, and event publishing |
+
+For example, install only Core and the model abstraction, or add one queue integration to the base composition:
+
+```bash
+python -m pip install "matterloop-core>=0.1.0,<0.2.0" \
+  "matterloop-models>=0.1.0,<0.2.0"
+
+python -m pip install "matterloop-presets==0.1.0" \
+  "matterloop-integration-fastapi==0.1.0" \
+  "matterloop-integration-celery==0.1.0"
+```
+
+Celery push queues and Redis pull queues are alternative task transports; select one for a deployment. Redis run
+repositories and event publishers can be combined with Celery, but the Redis integration does not provide a
+persistent `CheckpointStore`.
+
+### Optional capabilities
+
+Provider SDKs, MCP, and OpenTelemetry are not installed by `matterloop-presets`. Select them explicitly:
+
+```bash
+# OpenAI SDK; it can also construct OpenAI-compatible clients for DeepSeek, Qwen, Zhipu, and MiniMax
+python -m pip install "matterloop-models[openai]>=0.1.0,<0.2.0"
+
+# MCP SDK and OpenTelemetry API
+python -m pip install "matterloop-tools[mcp]>=0.1.0,<0.2.0" \
+  "matterloop-observability[otel]>=0.1.0,<0.2.0"
+```
+
+The application still constructs and injects SDK clients, model names, endpoints, connection pools, and credentials.
+MatterLoop source packages do not read `.env` files or environment variables. Applications that implement their own
+`ModelClient` or a provider's minimal client Protocol do not need the `openai` extra.
+
+### Install from an enterprise artifact repository
+
+In an enterprise environment, repository administrators should synchronize approved MatterLoop wheels and their
+transitive dependencies to one [PEP 503](https://peps.python.org/pep-0503/) Simple Index. Install only from that
+index:
+
+```bash
+python -m pip install \
+  --index-url https://packages.example.com/repository/pypi/simple \
+  "matterloop-presets==0.1.0"
+```
+
+- Use one enterprise index that proxies public PyPI, or ensure it contains all eight foundation distributions and
+  approved third-party dependencies.
+- Supply credentials through pip configuration, the system keyring, or CI secrets. Never place usernames or tokens
+  in commands, URLs, READMEs, or source code.
+- Enforce TLS. Distribute a private CA through system or pip certificate configuration instead of bypassing
+  verification with `--trusted-host`.
+- Do not combine the private index with public PyPI through `--extra-index-url`; this prevents dependency-confusion
+  selection between same-named packages.
+- In production, use an organization-owned constraints/hash manifest to pin every transitive artifact in addition to
+  the top-level version.
+
+Air-gapped environments can install from a scanned and approved wheelhouse without building from source:
+
+```bash
+python -m pip install --no-index --find-links /opt/matterloop-wheelhouse \
+  "matterloop-presets==0.1.0"
+```
+
+### Verify the installation
+
+Check dependencies and public imports in a clean virtual environment so the local workspace cannot hide a missing
+dependency:
+
+```bash
+python -m pip check
+python -c "from importlib.metadata import version; import matterloop_core, matterloop_presets; print(version('matterloop-presets'))"
+```
+
+The expected version is `0.1.0`, and `pip check` should report `No broken requirements found`.
+
+## Quick start
+
+After installation, start from a preset. `model_client` is a `ModelClient` already constructed by the application;
+MatterLoop does not read credentials or environment variables.
 
 ```python
 from matterloop_core import LoopRequest
@@ -122,28 +235,6 @@ Four presets provide practical starting points:
 - `production`: requires external Queue, RunRepository, CheckpointStore, and audit Publisher implementations; it does
   not fall back to memory.
 
-## Install only what you need
-
-Each directory is an independent distribution. Import names use underscores, so `matterloop-core` maps to
-`matterloop_core`. Source code lives directly under `src/python/matterloop_xxx`. You can install only the components
-you use, for example `pip install matterloop-core matterloop-models`, or install `matterloop-presets` for a complete
-base composition.
-
-| Layer | Distribution | Responsibility |
-| --- | --- | --- |
-| Loop kernel | [`matterloop-core`](matterloop-core/README.en.md) | State machine, HITL, checkpoints, events, and extension protocols |
-| Models | [`matterloop-models`](matterloop-models/README.en.md) | Provider-neutral DTOs, Registry, and OpenAI/DeepSeek/Qwen/Zhipu/MiniMax adapters |
-| Agents | [`matterloop-agents`](matterloop-agents/README.en.md) | Planner, Worker, Verifier, and TeamLoop DAG |
-| Tools | [`matterloop-tools`](matterloop-tools/README.en.md) | ToolRegistry, MCP, Skills, filesystem, Shell, and HTTP |
-| Policies and data | [`matterloop-policies`](matterloop-policies/README.en.md) · [`matterloop-memory`](matterloop-memory/README.en.md) | Budgets, approvals, and permissions; long-term memory and in-memory checkpoints |
-| Runtime and observability | [`matterloop-runtime`](matterloop-runtime/README.en.md) · [`matterloop-observability`](matterloop-observability/README.en.md) | Async, synchronous, and queue facades; logging, metrics, and tracing |
-| Composition | [`matterloop-presets`](matterloop-presets/README.en.md) | `minimal`, `coding`, `research`, and `production` assemblies |
-| Framework integration | [`FastAPI`](matterloop-integration-fastapi/README.en.md) · [`Celery`](matterloop-integration-celery/README.en.md) · [`Redis`](matterloop-integration-redis/README.en.md) | Thin adapters that contain no orchestration logic |
-
-Dependencies always point from composition layers toward foundation layers. `matterloop-core` imports no sibling
-distribution. See the [architecture guide](docs/architecture.en.md#distribution-dependency-boundaries) for the full
-allowlist.
-
 ## Current boundaries
 
 - In-memory checkpoints, memory, queues, repositories, and TeamRepository implementations are intended only for tests
@@ -159,9 +250,10 @@ allowlist.
 - `UsageLedger` is an atomic in-process ledger, not a cross-instance quota service or a provider invoice.
 - Default tests are fully offline. The live DeepSeek test is a separate, paid, opt-in workflow.
 
-## Development
+## Source development (contributors)
 
-This repository uses a uv workspace to manage 12 independently buildable distributions:
+The following commands are for repository contributors, not user installation. This repository uses a uv workspace
+to manage 12 independently buildable distributions:
 
 ```bash
 uv sync --all-extras --dev

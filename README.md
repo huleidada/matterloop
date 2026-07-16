@@ -11,7 +11,7 @@
 [![Typing](https://img.shields.io/badge/typing-py.typed-2F855A)](https://typing.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-7C3AED)](LICENSE)
 
-[快速开始](#快速开始) · [架构](docs/architecture.md) · [企业集成](docs/enterprise-integration.md) · [发布指南](docs/releasing.md) · [离线示例](examples/enterprise/)
+[安装](#安装) · [快速开始](#快速开始) · [架构](docs/architecture.md) · [企业集成](docs/enterprise-integration.md) · [离线示例](examples/enterprise/)
 
 </div>
 
@@ -48,17 +48,121 @@ flowchart LR
 - **组件可替换**：模型、工具和 Endpoint 按调用租约热替换，旧调用安全排空。
 - **多智能体可控制**：中心 Orchestrator 驱动 DAG fan-out/fan-in，Agent 不能直接改全局状态。
 
-## 快速开始
+## 安装
 
-最短路径是使用 preset。`model_client` 是应用已经构造好的 `ModelClient`；MatterLoop 不读取密钥或
-环境变量。所有发行包要求 Python 3.10 或更高版本。
+MatterLoop 以 12 个独立 Python 发行包发布到[公共 PyPI](https://pypi.org/search/?q=matterloop-)。
+普通用户不需要克隆仓库、安装 uv 或在本地构建 wheel。根 workspace 也不是可安装的总包：项目没有发布
+名为 `matterloop` 的元发行包，请根据场景安装 `matterloop-presets` 或具体组件。所有发行包要求
+Python 3.10–3.14。
 
-> `v0.1.0` 已发布到公共 PyPI。12 个发行包均提供 wheel、sdist 和 Trusted Publishing
-> 发布证明；版本记录见 [GitHub Release](https://github.com/huleidada/matterloop/releases/tag/v0.1.0)。
+### 从公共 PyPI 安装
+
+开箱装配推荐安装 `matterloop-presets`。它会从制品索引拉取 Core、Models、Runtime、Tools、Memory、
+Policies、Agents 和 Observability，不会安装 FastAPI、Celery、Redis 或可选 SDK：
 
 ```bash
-pip install matterloop-presets
+# 应用开发：跟随 0.1 系列的兼容更新
+python -m pip install --index-url https://pypi.org/simple \
+  "matterloop-presets>=0.1.0,<0.2.0"
+
+# 生产与 CI：固定经过验证的制品版本
+python -m pip install --index-url https://pypi.org/simple \
+  "matterloop-presets==0.1.0"
 ```
+
+`v0.1.0` 的 12 个发行包均已提供 wheel、sdist 和 Trusted Publishing 发布证明；对应的发布记录见
+[GitHub Release](https://github.com/huleidada/matterloop/releases/tag/v0.1.0)。建议在虚拟环境中安装，
+并始终使用 `python -m pip`，确保制品进入当前 Python 解释器。
+
+### 按需安装组件
+
+安装命令使用连字符发行名，Python 代码使用下划线导入名。下表中的包都可以直接从 PyPI 单独拉取；
+声明的 MatterLoop 内部依赖会由 pip 自动解析。
+
+| 能力 | PyPI 发行包 | Python 导入名 | 安装场景 |
+| --- | --- | --- | --- |
+| 闭环内核 | [`matterloop-core`](https://pypi.org/project/matterloop-core/) | `matterloop_core` | 只实现自己的 Planner、Executor 和 Verifier |
+| 模型抽象 | [`matterloop-models`](https://pypi.org/project/matterloop-models/) | `matterloop_models` | 模型 DTO、Registry、自定义或内置供应商适配 |
+| Runtime | [`matterloop-runtime`](https://pypi.org/project/matterloop-runtime/) | `matterloop_runtime` | 异步、同步、队列门面和本地进程限制 |
+| Tools | [`matterloop-tools`](https://pypi.org/project/matterloop-tools/) | `matterloop_tools` | ToolRegistry、文件、Shell、HTTP、MCP 和 Skills |
+| Memory | [`matterloop-memory`](https://pypi.org/project/matterloop-memory/) | `matterloop_memory` | 长期记忆协议和单进程内存 checkpoint |
+| Policies | [`matterloop-policies`](https://pypi.org/project/matterloop-policies/) | `matterloop_policies` | 预算、重试、停止、审批和权限 |
+| Agents | [`matterloop-agents`](https://pypi.org/project/matterloop-agents/) | `matterloop_agents` | 单 Agent 角色与 TeamLoop DAG 协作 |
+| Observability | [`matterloop-observability`](https://pypi.org/project/matterloop-observability/) | `matterloop_observability` | 结构化日志、Tracing 和 Metrics |
+| Presets | [`matterloop-presets`](https://pypi.org/project/matterloop-presets/) | `matterloop_presets` | 一次安装全部基础模块并使用预设装配 |
+| FastAPI | [`matterloop-integration-fastapi`](https://pypi.org/project/matterloop-integration-fastapi/) | `matterloop_integration_fastapi` | HTTP 控制面路由 |
+| Celery | [`matterloop-integration-celery`](https://pypi.org/project/matterloop-integration-celery/) | `matterloop_integration_celery` | Celery 推送式任务传输 |
+| Redis | [`matterloop-integration-redis`](https://pypi.org/project/matterloop-integration-redis/) | `matterloop_integration_redis` | Redis 拉取队列、运行仓储和事件发布 |
+
+例如，只安装 Core 和模型抽象，或在基础装配上增加一种队列集成：
+
+```bash
+python -m pip install "matterloop-core>=0.1.0,<0.2.0" \
+  "matterloop-models>=0.1.0,<0.2.0"
+
+python -m pip install "matterloop-presets==0.1.0" \
+  "matterloop-integration-fastapi==0.1.0" \
+  "matterloop-integration-celery==0.1.0"
+```
+
+Celery 推送队列与 Redis 拉取队列是两种任务传输方案，按部署方式二选一。Redis 的运行仓储和事件发布
+可以与 Celery 组合，但 Redis 集成不提供持久化 `CheckpointStore`。
+
+### 可选能力
+
+供应商 SDK、MCP 和 OpenTelemetry 不会随 `matterloop-presets` 自动安装，应显式选择：
+
+```bash
+# OpenAI SDK；也可用于 DeepSeek、千问、智谱和 MiniMax 的 OpenAI-compatible 客户端
+python -m pip install "matterloop-models[openai]>=0.1.0,<0.2.0"
+
+# MCP SDK 与 OpenTelemetry API
+python -m pip install "matterloop-tools[mcp]>=0.1.0,<0.2.0" \
+  "matterloop-observability[otel]>=0.1.0,<0.2.0"
+```
+
+SDK client、模型名、端点、连接池和凭据仍由应用构造并注入；MatterLoop 源码不会读取 `.env` 或环境
+变量。若应用实现自己的 `ModelClient` 或最小供应商 client Protocol，则不需要安装 `openai` extra。
+
+### 从企业制品仓库安装
+
+企业环境应让仓库管理员把已批准的 MatterLoop wheel 及其传递依赖同步到一个符合
+[PEP 503](https://peps.python.org/pep-0503/) 的 Simple Index，然后只从该索引安装：
+
+```bash
+python -m pip install \
+  --index-url https://packages.example.com/repository/pypi/simple \
+  "matterloop-presets==0.1.0"
+```
+
+- 使用能够代理公共 PyPI 的单一企业索引，或确保其中包含 8 个基础发行包及批准的第三方依赖。
+- 凭据通过 pip 配置、系统 keyring 或 CI Secret 注入，不把用户名、Token 写入命令、URL、README 或源码。
+- 使用 TLS；私有 CA 通过系统或 pip 证书配置下发，不用 `--trusted-host` 绕过证书校验。
+- 不把私库与公共 PyPI 通过 `--extra-index-url` 混用，避免同名包造成 dependency confusion。
+- 生产环境除固定顶层版本外，还应使用组织维护的 constraints/哈希清单锁定全部传递制品。
+
+隔离网络可从经过扫描和批准的 wheelhouse 安装，同样不需要源码构建：
+
+```bash
+python -m pip install --no-index --find-links /opt/matterloop-wheelhouse \
+  "matterloop-presets==0.1.0"
+```
+
+### 验证安装
+
+在干净虚拟环境中检查依赖与公开导入名，避免本地 workspace 掩盖漏装依赖：
+
+```bash
+python -m pip check
+python -c "from importlib.metadata import version; import matterloop_core, matterloop_presets; print(version('matterloop-presets'))"
+```
+
+预期输出版本 `0.1.0`，且 `pip check` 报告 `No broken requirements found`。
+
+## 快速开始
+
+完成安装后，可以从 preset 开始。`model_client` 是应用已经构造好的 `ModelClient`；MatterLoop 不读取
+密钥或环境变量。
 
 ```python
 from matterloop_core import LoopRequest
@@ -110,27 +214,6 @@ model_client = OpenAIModelClient(
 - `research`：只读文件、HTTPS host allowlist 和引用门槛。
 - `production`：要求外部 Queue、RunRepository、CheckpointStore 和审计 Publisher，不做内存回退。
 
-## 按需安装
-
-每个目录都是独立发行包，导入名使用下划线形式，例如 `matterloop-core` 对应
-`matterloop_core`。源码直接位于 `src/python/matterloop_xxx`。从首个公开 Release 起，可以只安装
-实际使用的组件，例如 `pip install matterloop-core matterloop-models`；需要完整基础装配时安装
-`matterloop-presets`。
-
-| 层 | 发行包 | 作用 |
-| --- | --- | --- |
-| 闭环内核 | [`matterloop-core`](matterloop-core/) | 状态机、HITL、checkpoint、事件和扩展协议 |
-| 模型 | [`matterloop-models`](matterloop-models/) | 中立 DTO、Registry、OpenAI/DeepSeek/千问/智谱/MiniMax 适配器 |
-| Agent | [`matterloop-agents`](matterloop-agents/) | Planner、Worker、Verifier 与 TeamLoop DAG |
-| 工具 | [`matterloop-tools`](matterloop-tools/) | ToolRegistry、MCP、Skills、文件、Shell 和 HTTP |
-| 策略与数据 | [`matterloop-policies`](matterloop-policies/) · [`matterloop-memory`](matterloop-memory/) | 预算/审批/权限；长期记忆与内存 checkpoint |
-| 运行与观测 | [`matterloop-runtime`](matterloop-runtime/) · [`matterloop-observability`](matterloop-observability/) | 异步/同步/队列门面；日志、指标、Trace |
-| 组合 | [`matterloop-presets`](matterloop-presets/) | minimal、coding、research、production 装配 |
-| 框架集成 | [`FastAPI`](matterloop-integration-fastapi/) · [`Celery`](matterloop-integration-celery/) · [`Redis`](matterloop-integration-redis/) | 薄适配层，不承载编排逻辑 |
-
-依赖始终从组合层指向基础层，`matterloop-core` 不导入任何兄弟包。完整白名单见
-[架构说明](docs/architecture.md#发行包依赖边界)。
-
 ## 当前边界
 
 - 内存 checkpoint、记忆、队列、仓储和 TeamRepository 只适合测试或单进程运行。
@@ -141,9 +224,9 @@ model_client = OpenAIModelClient(
 - `UsageLedger` 是进程内原子账本，不是跨实例额度服务或供应商账单。
 - 默认测试完全离线；真实 DeepSeek 测试是单独的付费 opt-in 流程。
 
-## 开发
+## 参与开发（源码仓库）
 
-仓库使用 uv workspace 管理 12 个可独立构建的包：
+以下命令只面向仓库贡献者，不是用户安装方式。仓库使用 uv workspace 管理 12 个可独立构建的包：
 
 ```bash
 uv sync --all-extras --dev
