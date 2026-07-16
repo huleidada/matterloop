@@ -4,12 +4,13 @@ MatterLoop 由 12 个独立发行包组成。仓库采用统一版本：一次 R
 版本号，并由同一个 Git tag 触发发布。这样可以让内部依赖约束保持可预测，也避免用户安装到一组
 彼此不兼容的组件。
 
-> 当前仓库尚未完成首次公共 PyPI 发布。只有 `v0.1.0` 发布工作流成功后，本文中的
-> `pip install` 命令才会从 PyPI 获得 MatterLoop。
+> `v0.1.0` 已于 2026-07-16 发布到公共 PyPI。12 个发行包均包含 wheel 与 sdist，并通过
+> [GitHub Actions 发布流程](https://github.com/huleidada/matterloop/actions/runs/29477478162)
+> 完成公共索引安装验证。版本说明见 [GitHub Release](https://github.com/huleidada/matterloop/releases/tag/v0.1.0)。
 
 ## 发行范围
 
-首发包含以下 PyPI 项目，版本均为 `0.1.0`：
+`v0.1.0` 包含以下 PyPI 项目：
 
 | PyPI 项目 | Python 导入名 | 用途 |
 | --- | --- | --- |
@@ -30,7 +31,7 @@ MatterLoop 由 12 个独立发行包组成。仓库采用统一版本：一次 R
 `matterloop-presets`；只需要底层协议或某项能力时，可以单独安装对应包。`presets` 会通过依赖关系
 安装其所需的基础模块，框架集成包仍需按实际部署方式单独选择。
 
-## 首次发布前的一次性配置
+## 可信发布的一次性配置
 
 发布使用 PyPI Trusted Publishing。GitHub Actions 通过 OIDC 获取一次性的、短时有效的上传凭据，
 仓库不保存 `PYPI_API_TOKEN`，维护者也不需要在本地生成或复制长期 Token。
@@ -60,7 +61,7 @@ Environment 中不添加 PyPI Token。每个发布作业只下载已经验证的
 和一个 sdist；只有该作业拥有 `id-token: write`。独立身份既满足首次项目创建约束，也让单包重试和
 审计边界更清楚。
 
-### 2. 为 12 个项目登记 Pending Publisher
+### 2. 首次发布时登记 Pending Publisher
 
 登录 PyPI，在“Publishing”页面为每个项目分别登记一个 Pending Publisher。Owner、Repository 和
 Workflow 相同，项目名与 Environment 使用上表中的对应值：
@@ -73,7 +74,8 @@ Workflow 相同，项目名与 Environment 使用上表中的对应值：
 | Environment name | 上表中与项目对应的值 |
 
 字段必须与 GitHub 上的实际名称逐字一致。Pending Publisher 不会提前占用项目名；首次 OIDC 上传
-成功时，PyPI 才创建对应项目并将该 Publisher 转为正式配置。发布前应再次确认 12 个名称仍可用。
+成功时，PyPI 才创建对应项目并将该 Publisher 转为正式配置。`v0.1.0` 发布后，12 个项目均已完成
+这次转换；后续版本复用现有 Trusted Publisher，不再重复登记 Pending Publisher。
 
 ## 准备一个版本
 

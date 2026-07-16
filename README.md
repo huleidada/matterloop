@@ -5,6 +5,7 @@
 **把 Agent 从“一次模型调用”变成可验证、可暂停、可恢复的工程闭环。**
 
 [![Python](https://img.shields.io/badge/Python-3.10--3.14-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PyPI](https://img.shields.io/pypi/v/matterloop-presets?label=PyPI&color=3775A9)](https://pypi.org/project/matterloop-presets/)
 [![Typing](https://img.shields.io/badge/typing-py.typed-2F855A)](https://typing.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-7C3AED)](LICENSE)
 
@@ -50,8 +51,8 @@ flowchart LR
 最短路径是使用 preset。`model_client` 是应用已经构造好的 `ModelClient`；MatterLoop 不读取密钥或
 环境变量。所有发行包要求 Python 3.10 或更高版本。
 
-> 公共 PyPI 首发正在准备中。以下命令从首个公开版本成功发布到 PyPI 后可用；首发完成前请使用
-> uv workspace 运行源码。发布状态和可信发布流程见[发布指南](docs/releasing.md)。
+> `v0.1.0` 已发布到公共 PyPI。12 个发行包均提供 wheel、sdist 和 Trusted Publishing
+> 发布证明；版本记录见 [GitHub Release](https://github.com/huleidada/matterloop/releases/tag/v0.1.0)。
 
 ```bash
 pip install matterloop-presets
