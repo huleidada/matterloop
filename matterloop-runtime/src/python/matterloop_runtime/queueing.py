@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections import deque
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from heapq import heapify, heappop, heappush
 from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
@@ -255,18 +255,20 @@ class InMemoryRunRepository:
             return True
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, order=True)
 class _PendingJob:
-    job: QueuedRun
     available_at: datetime
-    attempt: int = 1
+    sequence: int
+    job: QueuedRun = field(compare=False)
+    attempt: int = field(default=1, compare=False)
 
 
 class InMemoryQueueBackend:
     """支持租约、重试延迟和取消的内存队列后端。"""
 
     def __init__(self) -> None:
-        self._pending: deque[_PendingJob] = deque()
+        self._pending: list[_PendingJob] = []
+        self._pending_sequence = 0
         self._leased: dict[str, QueueLease] = {}
         self._known_runs: set[str] = set()
         self._cancelled_runs: set[str] = set()
@@ -278,7 +280,7 @@ class InMemoryQueueBackend:
             if job.run_id in self._known_runs:
                 raise DuplicateRunError(job.run_id)
             self._known_runs.add(job.run_id)
-            self._pending.append(_PendingJob(job, _utc_now()))
+            self._push_pending(job, _utc_now())
 
     async def lease(
         self,
@@ -293,13 +295,13 @@ class InMemoryQueueBackend:
         async with self._lock:
             now = _utc_now()
             self._reclaim_expired(now)
-            for _ in range(len(self._pending)):
-                pending = self._pending.popleft()
+            while self._pending:
+                pending = self._pending[0]
+                if pending.available_at > now:
+                    return None
+                heappop(self._pending)
                 if pending.job.run_id in self._cancelled_runs:
                     self._known_runs.discard(pending.job.run_id)
-                    continue
-                if pending.available_at > now:
-                    self._pending.append(pending)
                     continue
                 lease = QueueLease(
                     lease_id=uuid4().hex,
@@ -335,12 +337,10 @@ class InMemoryQueueBackend:
             if lease.job.run_id in self._cancelled_runs:
                 self._known_runs.discard(lease.job.run_id)
                 return
-            self._pending.append(
-                _PendingJob(
-                    lease.job,
-                    _utc_now() + timedelta(seconds=delay_seconds),
-                    attempt=lease.attempt + 1,
-                )
+            self._push_pending(
+                lease.job,
+                _utc_now() + timedelta(seconds=delay_seconds),
+                attempt=lease.attempt + 1,
             )
 
     async def renew(self, lease: QueueLease, lease_seconds: float) -> QueueLease:
@@ -374,10 +374,11 @@ class InMemoryQueueBackend:
             if run_id not in self._known_runs:
                 return False
             self._cancelled_runs.add(run_id)
-            retained = deque(item for item in self._pending if item.job.run_id != run_id)
+            retained = [item for item in self._pending if item.job.run_id != run_id]
             removed = len(retained) != len(self._pending)
-            self._pending = retained
             if removed:
+                heapify(retained)
+                self._pending = retained
                 self._known_runs.discard(run_id)
                 self._cancelled_runs.discard(run_id)
             return True
@@ -389,7 +390,20 @@ class InMemoryQueueBackend:
             if lease.job.run_id in self._cancelled_runs:
                 self._known_runs.discard(lease.job.run_id)
             else:
-                self._pending.appendleft(_PendingJob(lease.job, now, attempt=lease.attempt + 1))
+                self._push_pending(lease.job, now, attempt=lease.attempt + 1)
+
+    def _push_pending(
+        self,
+        job: QueuedRun,
+        available_at: datetime,
+        *,
+        attempt: int = 1,
+    ) -> None:
+        heappush(
+            self._pending,
+            _PendingJob(available_at, self._pending_sequence, job, attempt),
+        )
+        self._pending_sequence += 1
 
 
 class QueueRuntime:

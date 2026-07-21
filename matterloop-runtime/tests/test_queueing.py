@@ -3,7 +3,9 @@
 import asyncio
 import math
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
+import matterloop_runtime.queueing as queueing_module
 import pytest
 from matterloop_core import LoopRequest, ResumeMode
 from matterloop_runtime import (
@@ -35,6 +37,52 @@ async def test_queue_backend_lease_release_and_acknowledge() -> None:
     assert retried.attempt == 2
     await backend.acknowledge(retried)
     assert await backend.lease("worker", 30) is None
+
+
+async def test_queue_backend_leases_ready_job_before_delayed_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """延迟重试不应阻塞后来入队但已经可以执行的任务。"""
+    now = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+    monkeypatch.setattr(queueing_module, "_utc_now", lambda: now[0])
+    backend = InMemoryQueueBackend()
+    request = LoopRequest("goal")
+    await backend.enqueue(QueuedRun("delayed", QueueAction.START, request=request))
+    delayed = await backend.lease("worker", 30)
+    assert delayed is not None
+    await backend.release(delayed, delay_seconds=60)
+    await backend.enqueue(QueuedRun("ready", QueueAction.START, request=request))
+
+    ready = await backend.lease("worker", 30)
+    assert ready is not None
+    assert ready.job.run_id == "ready"
+    assert await backend.lease("worker", 30) is None
+
+    now[0] += timedelta(seconds=60)
+    retried = await backend.lease("worker", 30)
+    assert retried is not None
+    assert retried.job.run_id == "delayed"
+    assert retried.attempt == 2
+
+
+async def test_queue_backend_preserves_fifo_for_equal_availability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """相同可用时间的任务应按入队顺序稳定租用。"""
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(queueing_module, "_utc_now", lambda: now)
+    backend = InMemoryQueueBackend()
+    request = LoopRequest("goal")
+    for run_id in ("run-1", "run-2", "run-3"):
+        await backend.enqueue(QueuedRun(run_id, QueueAction.START, request=request))
+
+    leased_run_ids: list[str] = []
+    for _ in range(3):
+        lease = await backend.lease("worker", 30)
+        assert lease is not None
+        leased_run_ids.append(lease.job.run_id)
+
+    assert leased_run_ids == ["run-1", "run-2", "run-3"]
 
 
 async def test_queue_backend_renew_invalidates_old_lease_snapshot() -> None:
