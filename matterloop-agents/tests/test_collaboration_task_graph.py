@@ -127,6 +127,29 @@ def test_failed_task_blocks_all_transitive_dependants() -> None:
     assert graph.has_failures is True
 
 
+def test_failed_task_blocks_reverse_ordered_deep_graph() -> None:
+    """失败传播不应依赖任务定义顺序，也不应遗漏深层下游节点。"""
+    tasks = tuple(
+        TaskSpec(
+            f"task-{index}",
+            f"任务 {index}",
+            "python",
+            dependencies=() if index == 0 else (f"task-{index - 1}",),
+        )
+        for index in range(100)
+    )
+    graph = TaskGraph(tuple(reversed(tasks)))
+
+    graph.start("task-0", "worker")
+    graph.fail("task-0", "执行失败")
+
+    assert graph.state("task-0").status is TaskStatus.FAILED
+    assert all(
+        graph.state(f"task-{index}").status is TaskStatus.BLOCKED for index in range(1, len(tasks))
+    )
+    assert graph.is_terminal is True
+
+
 def test_recovery_blocks_non_replayable_inflight_task() -> None:
     """默认任务的执行状态不明确时不得重复调用 Agent。"""
     task = TaskSpec("task", "执行任务", "python")
@@ -142,6 +165,20 @@ def test_recovery_blocks_non_replayable_inflight_task() -> None:
     assert recovered.status is TaskStatus.BLOCKED
     assert recovered.attempt == 1
     assert recovered.assigned_agent == "worker"
+
+
+def test_recovery_blocks_transitive_dependants() -> None:
+    """恢复时阻断执行中任务后，阻断状态应沿反向依赖索引完整传播。"""
+    root = TaskSpec("root", "根任务", "python")
+    middle = TaskSpec("middle", "中间任务", "python", dependencies=("root",))
+    leaf = TaskSpec("leaf", "叶子任务", "python", dependencies=("middle",))
+    graph = TaskGraph((leaf, middle, root))
+    graph.start("root", "worker")
+
+    assert graph.recover_inflight() == ("root",)
+    assert graph.state("root").status is TaskStatus.BLOCKED
+    assert graph.state("middle").status is TaskStatus.BLOCKED
+    assert graph.state("leaf").status is TaskStatus.BLOCKED
 
 
 def test_recovery_replays_only_explicitly_safe_task() -> None:
