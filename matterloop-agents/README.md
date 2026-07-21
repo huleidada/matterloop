@@ -125,6 +125,10 @@ runtime = AsyncTeamRuntime(
 可能有副作用的 Endpoint。验证失败先消耗任务级 attempt；耗尽后才归档当前 cycle，带着失败审查
 进入下一轮规划。
 
+`TaskSpec.replay_safe` 默认为 `False`。进程中断留下 `RUNNING` 时，默认进入
+`BLOCKED/RECOVERY_REQUIRED` 等待宿主对账，不调用替代 Agent；只有宿主确认任务只读且可安全重放，
+并显式设置 `replay_safe=True`，才会释放旧分配并开始下一次 attempt。
+
 `TeamLimits` 分开限制单计划任务数、并发任务、单任务尝试、团队 cycle、计划 revision 和活跃超时。
 暂停不会重置任何计数或用量，也不计入 active timeout。
 
@@ -132,6 +136,9 @@ runtime = AsyncTeamRuntime(
 生命周期，应用要等待旧租约排空后关闭旧资源。
 
 `LoopAgentEndpoint` 把团队任务映射为子 `LoopRequest`，并传入依赖结果、人工反馈和父子 usage scope。
+它会在全部业务 metadata 合并后强制写入 `tool_access_scope=read_only`；任务、请求或 Endpoint metadata
+中的同名字段都不能提权。`ToolCallingWorker` 将该范围传给 `ToolRegistry`，子 Agent 只能调用明确标记
+为 `READ` 的工具；`COMPUTE/WRITE/UNKNOWN` 必须由主 Loop 在默认 `FULL` 范围内统一治理。
 当前子 Loop 自己产生的 pending interaction 不会自动提升到团队层；需要这种行为时，应实现专用
 Endpoint 桥接两级 HITL。
 
@@ -174,7 +181,7 @@ if interaction is not None:
 - `TeamRequest(goal, acceptance_criteria, limits, metadata)`。
 - `TeamLimits(max_tasks, max_concurrency, max_task_attempts, max_cycles, max_plan_revisions, timeout_seconds)`：默认 50、4、3、3、2 和无超时。
 - `AgentSpec(agent_id, capabilities, max_concurrency, version, description, role, metadata)`。
-- `TaskSpec(task_id, description, capability, dependencies, acceptance_criteria, requires_approval, priority, metadata)`。
+- `TaskSpec(task_id, description, capability, dependencies, acceptance_criteria, requires_approval, priority, metadata, replay_safe)`；`replay_safe` 默认 `False`，只有明确可重放的纯计算任务才会在崩溃后自动再次执行。
 - `AgentTaskContext(team_run_id, request, task, agent_id, attempt, dependency_results, previous_error, human_feedback)`。
 - `TaskResult(task_id, agent_id, success, output, artifacts, error, attempt, metadata)`。
 - `TaskVerification(passed, feedback, score, evidence, failed_criteria)`。
@@ -190,12 +197,13 @@ if interaction is not None:
 - `TeamOrchestratorComponents(planner, agents, selection_policy, verifier, approval_gate, repository, events, aggregator, reviewer)`。
 
 `TeamReviewAction` 为 `ACCEPT/REPLAN/REQUEST_HUMAN/STOP`。团队停止原因区分完成、审批/人工拒绝、任务
-失败、无可用 Agent、容量、死锁、取消、超时、cycle/revision 上限、预算耗尽和组件错误。
+失败、无可用 Agent、容量、死锁、取消、超时、cycle/revision 上限、预算耗尽、恢复对账和组件错误。
 
 </details>
 
 ## 生产边界
 
+- 子 Agent 只生成方案和读取证据；计算、工具写入和业务写操作必须回到主 Loop 的审批、预算与审计链路。
 - Endpoint、工具和业务写操作必须使用 team run/task/attempt 作为幂等键。
 - `ResourceLimitExceededError` 映射为 `BLOCKED/BUDGET_EXHAUSTED`，不作为普通任务错误重试。
 - Team 事件可能包含 goal、完整输出、人工意见和 metadata；Publisher 与 Repository 都要实施租户

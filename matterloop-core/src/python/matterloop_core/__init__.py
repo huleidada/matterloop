@@ -39,6 +39,7 @@ from matterloop_core.exceptions import (
     InvalidStateTransitionError,
     LoopNotFoundError,
     LoopNotResumableError,
+    LoopRequestConflictError,
     MatterLoopError,
     ResourceLimitExceededError,
 )
@@ -101,6 +102,7 @@ __all__ = [
     "LoopLimits",
     "LoopNotFoundError",
     "LoopNotResumableError",
+    "LoopRequestConflictError",
     "LoopPolicy",
     "LoopRequest",
     "LoopResult",

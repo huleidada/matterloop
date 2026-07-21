@@ -158,16 +158,17 @@ persistence boundary so state and an outbox are written atomically. Replacing on
 property, and `event_sequence` alone does not justify an “exactly once” claim.
 
 `LoopCheckpointCodec` currently accepts schema v2 only. A persistence implementation must retain at least the current
-plan, step cursor, approved `step_id` values, human interaction history, event sequence, revision, and active time.
-Unknown schemas must fail rather than guess at field meanings.
+plan, step cursor, approved `step_id` values, `active_operation_id`, pending execution result, heartbeat, human
+interaction history, event sequence, revision, and active time. Unknown schemas must fail rather than guess at field
+meanings.
 
 CAS ensures that two writers cannot silently overwrite each other; it is not an execution lease held for the entire
 run. Core saves state before invoking components such as the Planner and Executor, so competing controllers that
-follow the protocol will usually encounter `CheckpointConflictError` before their next external call. An external
-side effect may nevertheless have occurred before its result checkpoint was written. Current Core also permits
-resumption only from `PAUSED` or `BLOCKED`; it does not automatically take over a run that crashed in an active state.
-A queue Worker must still claim the outer `RunRecord`, and an Executor with side effects must still use a business
-idempotency key.
+follow the protocol will usually encounter `CheckpointConflictError` before their next external call. Core persists a
+stable operation identifier before invoking an Executor and saves the pending verification result before entering the
+Verifier. `recover()` can reuse that result; if the crash occurred before it was saved, the run enters
+`RECOVERY_REQUIRED` for host reconciliation and is never automatically replayed. A queue Worker must still claim the
+outer `RunRecord`, and external systems should enforce business idempotency using the same operation identifier.
 
 Lifecycle events carry a `LoopContext` snapshot, and Team events may also carry a complete `TeamSnapshot`. These
 objects can contain prompts, human input, tool output, and business metadata. `Redactor` only redacts by mapping key;
@@ -220,10 +221,10 @@ One Team execution cycle follows this order:
    `REPLAN`, `REQUEST_HUMAN`, or `STOP`.
 
 Step 6 is a recovery boundary. After a crash, a `VERIFYING` node retains its execution result and resumes
-verification without replaying the Agent. A node left in `RUNNING` has no provably complete result and is restored to
-`READY`, so it may execute again. `AgentEndpoint` and any external systems it calls must use a stable business
-idempotency key to ensure a side effect happens once. `attempt` is appropriate for auditing, but not as the sole
-component of an execute-once idempotency key, because a recovery retry increments it.
+verification without replaying the Agent. A node left in `RUNNING` has no provably complete result and defaults to
+`BLOCKED / RECOVERY_REQUIRED`; only a `TaskSpec` with `replay_safe=True` returns to `READY`. `AgentEndpoint` and any
+external systems it calls must use a stable business idempotency key to ensure a side effect happens once. `attempt`
+is appropriate for auditing, but not as the sole component of an execute-once idempotency key.
 
 `dependency_results` is the official path through which a downstream Agent receives upstream results. Mailbox and
 ArtifactStore are optional communication and artifact ports; they have no authority to modify the task graph.

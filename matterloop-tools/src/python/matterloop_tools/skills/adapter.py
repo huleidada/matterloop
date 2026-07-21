@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-from matterloop_tools.base import ToolContext, ToolResult, ToolSpec
+from matterloop_tools.base import ToolContext, ToolEffect, ToolResult, ToolSpec
 from matterloop_tools.errors import ToolInputError
 from matterloop_tools.skills.base import (
     SkillContentTrust,
@@ -135,6 +135,7 @@ class SkillTool:
                 "required": ["operation"],
                 "additionalProperties": False,
             },
+            default_effect=ToolEffect.READ,
         )
 
     @property

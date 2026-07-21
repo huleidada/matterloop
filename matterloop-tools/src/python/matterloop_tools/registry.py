@@ -16,8 +16,10 @@ from matterloop_tools.base import (
     AllowAllToolAuthorizer,
     PermissionDecision,
     Tool,
+    ToolAccessScope,
     ToolAuthorizer,
     ToolContext,
+    ToolEffect,
     ToolResult,
     ToolSpec,
 )
@@ -120,12 +122,19 @@ class ToolRegistry:
             工具标准结果。
 
         Raises:
-            ToolPermissionDeniedError: 授权器拒绝调用。
+            ToolPermissionDeniedError: 只读边界或授权器拒绝调用。
             ToolNotFoundError: 工具不存在。
         """
         stable_arguments = _freeze_arguments(arguments)
         try:
             async with self._components.acquire(name) as tool:
+                effect = tool.spec.effect_for(stable_arguments)
+                if (
+                    context.access_scope is ToolAccessScope.READ_ONLY
+                    and effect is not ToolEffect.READ
+                ):
+                    # 强制只读边界先于可插拔授权器执行，未知副作用也按拒绝处理。
+                    raise ToolPermissionDeniedError(name)
                 # 租约覆盖授权与执行，避免同名工具在授权后被替换成不同实现。
                 decision = await self._authorizer.authorize(
                     name,

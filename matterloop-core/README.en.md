@@ -157,7 +157,9 @@ do not present this field as a count of successful steps.
 
 `timeout_seconds` measures active time, including component calls, retry delays, checkpoints, and
 event publication. The clock stops while waiting for a human. Resuming does not reset elapsed time,
-cycle count, or attempt count.
+cycle count, or attempt count. The controller supervises long component calls and writes
+`LOOP_HEARTBEAT` at `heartbeat_interval_seconds`; cancellation and overall timeout drain the
+component coroutine before committing the terminal state.
 
 ## Approval and human feedback
 
@@ -212,9 +214,12 @@ current plan and the approval cache for the current cycle, while preserving reco
 history, and consumed cycle/attempt counts. Token, cost, and tool quotas belong to an external policy
 ledger; persistence across processes depends on the ledger implementation.
 
-Resume accepts only `PAUSED` and `BLOCKED`, and any `pending_interaction` must be answered first. This
-version does not automatically take over a run that crashed while actively `PLANNING`, `EXECUTING`,
-or `VERIFYING`. Executors with side effects must still use business idempotency keys.
+`resume()` accepts only `PAUSED` and `BLOCKED`, and any `pending_interaction` must be answered first.
+`recover()` handles active checkpoints left by a process crash: `VERIFYING` reuses the persisted
+`pending_execution` without invoking the Executor again; `EXECUTING` without a saved result enters
+`BLOCKED / RECOVERY_REQUIRED` so the host can reconcile `active_operation_id`, and is never blindly
+replayed. An explicit `run_id` is also a submission idempotency key: the same request returns the
+existing snapshot, while a different request raises `LoopRequestConflictError`.
 
 The essential `CheckpointStore` contract is not merely “save an object”; it is revision CAS:
 
@@ -235,9 +240,10 @@ payload = codec.dumps(context)
 restored = codec.loads(payload)
 ```
 
-Schema v2 stores the plan cursor, records, human history, approved steps, active timing, event
-sequence, and revision. Unknown versions, incorrectly typed fields, timezone-naive timestamps, or
-non-JSON metadata raise `CheckpointSchemaError`.
+Schema v2 stores the plan cursor, records, human history, approved steps, execution operation,
+pending verification result, heartbeat, active timing, event sequence, and revision. Older v2
+checkpoints that omit the new optional fields decode them as empty. Unknown versions, incorrectly
+typed fields, timezone-naive timestamps, or non-JSON metadata raise `CheckpointSchemaError`.
 
 Every state commit follows this fixed order:
 
@@ -295,10 +301,12 @@ leave a partially installed plugin.
 | `approval_gate` | Handles only steps that declare an approval requirement |
 | `retry_policy` | Handles only ordinary exceptions raised by an Executor |
 | `completion_evaluator` | Optional; defaults to `None`, which completes immediately after all steps pass |
+| `heartbeat_interval_seconds` | Heartbeat persistence interval; defaults to `5.0` seconds and must be finite and positive |
+| `cancellation_poll_interval_seconds` | Cancellation polling interval for long calls; defaults to `0.1` seconds and must be finite and positive |
 
-The main methods are `run()`, `resume()`, `submit_human_response()`, and `cancel()`. `cancel()` records
-a cooperative cancellation that takes effect at the next safe boundary. Call `create_run_id()` first
-when an associated ID is needed before starting the run.
+The main methods are `run()`, `resume()`, `recover()`, `submit_human_response()`, and `cancel()`.
+`cancel()` takes effect at a safe boundary or at the next supervision poll during a long call. Call
+`create_run_id()` first when an associated ID is needed before starting the run.
 
 ## Failure boundaries
 
@@ -332,7 +340,7 @@ its values must still be JSON-serializable when persisted with schema v2.
 
 - `LoopLimits`: `max_cycles: int = 5`, `max_attempts: int = 20`,
   `max_steps_per_plan: int = 20`, `timeout_seconds: float | None = None`. The first three values must
-  be at least 1; a non-null timeout must be greater than 0.
+  be at least 1; a non-null timeout must be finite and greater than 0.
 - `LoopRequest`: required `goal: str`; `acceptance_criteria: tuple[str, ...] = ()`,
   `limits: LoopLimits = LoopLimits()`, `metadata: Mapping[str, object] = {}`. The goal and criteria
   cannot contain blank text.
@@ -359,7 +367,9 @@ its values must still be JSON-serializable when persisted with schema v2.
   `total_attempts: int`, `completed_steps: int`, `records: tuple[IterationRecord, ...]`,
   `stop_reason: StopReason | None`; optional `error: str = ""`,
   `pending_interaction: HumanInteractionRequest | None = None`,
-  `human_interactions: tuple[HumanInteractionRecord, ...] = ()`, `revision: int = 0`,
+  `human_interactions: tuple[HumanInteractionRecord, ...] = ()`,
+  `active_operation_id: str | None = None`, `last_heartbeat_at: datetime | None = None`,
+  `revision: int = 0`,
   `event_sequence: int = 0`. `iterations` and `feedback_history` are read-only convenience properties.
 
 ### Human interaction and control decisions
@@ -374,7 +384,7 @@ its values must still be JSON-serializable when persisted with schema v2.
   `responded_at: datetime = <UTC>`. Revision and additional-input actions require non-empty `content`.
 - `HumanInteractionRecord`: required `request: HumanInteractionRequest`, `response: HumanResponse`;
   `recorded_at: datetime = <UTC>`. The request and response interaction IDs must match.
-- `RetryDecision`: required `action: RetryAction`; `delay_seconds: float = 0`, which cannot be negative.
+- `RetryDecision`: required `action: RetryAction`; `delay_seconds: float = 0`, which must be finite and non-negative.
 - `CompletionDecision`: required `action: CompletionAction`; `feedback: str = ""`,
   `interaction: HumanInteractionRequest | None = None`. Only `REQUEST_HUMAN` requires, and may carry,
   an interaction.
@@ -391,6 +401,8 @@ its values must still be JSON-serializable when persisted with schema v2.
   `approved_step_ids: set[str] = set()`, `replan_required: bool = False`,
   `completion_approved: bool = False`.
 - `LoopContext` consistency and time: `event_sequence: int = 0`, `revision: int = 0`,
+  `active_operation_id: str | None = None`, `pending_execution: ExecutionResult | None = None`,
+  `pending_attempt: int | None = None`, `last_heartbeat_at: datetime | None = None`,
   `active_elapsed_seconds: float = 0`, `active_started_at: datetime | None = None`,
   `started_at: datetime = <UTC>`, `updated_at: datetime = <UTC>`. Extension components receive a
   snapshot and cannot advance the controller by mutating it.

@@ -28,7 +28,10 @@ jobs:
           enable-cache: true
 
       - name: Install the locked development environment
-        run: uv sync --all-extras --dev --frozen
+        run: |
+          uv lock --check
+          uv sync --all-extras --dev --locked
+          uv pip check --python .venv/bin/python
 
       - name: Validate the release contract
         run: uv run python scripts/check_release.py --tag "${GITHUB_REF_NAME}"
@@ -92,7 +95,8 @@ jobs:
             "matterloop-models[openai]==${version}" \
             "matterloop-observability[otel]==${version}" \
             "matterloop-tools[mcp]==${version}"
-          .release-wheel-test/bin/python scripts/verify_imports.py \
+          uv pip check --python .release-wheel-test/bin/python
+          .release-wheel-test/bin/python -I scripts/verify_imports.py \
             matterloop_core \
             matterloop_models \
             matterloop_runtime \
@@ -105,7 +109,7 @@ jobs:
             matterloop_integration_fastapi \
             matterloop_integration_celery \
             matterloop_integration_redis
-          .release-wheel-test/bin/python -c "import mcp, openai, opentelemetry"
+          .release-wheel-test/bin/python -c "import mcp.client.session, mcp.types, openai, opentelemetry"
 
       - name: Verify source distributions in a clean environment
         shell: bash
@@ -118,7 +122,8 @@ jobs:
             --python .release-sdist-test/bin/python \
             --find-links release-dist \
             "${sdists[@]}"
-          .release-sdist-test/bin/python scripts/verify_imports.py \
+          uv pip check --python .release-sdist-test/bin/python
+          .release-sdist-test/bin/python -I scripts/verify_imports.py \
             matterloop_core \
             matterloop_models \
             matterloop_runtime \
@@ -264,7 +269,8 @@ jobs:
             fi
             sleep 10
           done
-          .pypi-test/bin/python scripts/verify_imports.py \
+          uv pip check --python .pypi-test/bin/python
+          .pypi-test/bin/python -I scripts/verify_imports.py \
             matterloop_core \
             matterloop_models \
             matterloop_runtime \
@@ -277,4 +283,4 @@ jobs:
             matterloop_integration_fastapi \
             matterloop_integration_celery \
             matterloop_integration_redis
-          .pypi-test/bin/python -c "import mcp, openai, opentelemetry"
+          .pypi-test/bin/python -c "import mcp.client.session, mcp.types, openai, opentelemetry"

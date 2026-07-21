@@ -238,10 +238,15 @@ class TaskGraph:
                 self._states[task_id] = replace(state, status=TaskStatus.CANCELLED)
         self._refresh_pending()
 
-    def recover_inflight(self) -> None:
-        """恢复未完成执行；验证中节点保留结果并由控制器精确继续。"""
+    def recover_inflight(self) -> tuple[str, ...]:
+        """恢复中断节点，并返回因副作用不明确而被阻塞的任务标识。
+
+        只有显式声明 ``replay_safe`` 的执行中任务可以回到就绪状态。验证中节点已经保存
+        执行结果，保持原状态并由控制器继续验证；其他执行中任务绝不自动重复调用 Agent。
+        """
+        blocked: list[str] = []
         for task_id, state in tuple(self._states.items()):
-            if state.status in {TaskStatus.WAITING_APPROVAL, TaskStatus.RUNNING}:
+            if state.status is TaskStatus.RUNNING and state.spec.replay_safe:
                 self._states[task_id] = replace(
                     state,
                     status=TaskStatus.READY,
@@ -250,7 +255,15 @@ class TaskGraph:
                     verification=None,
                     error="recovered from interrupted execution",
                 )
+            elif state.status in {TaskStatus.WAITING_APPROVAL, TaskStatus.RUNNING}:
+                self._states[task_id] = replace(
+                    state,
+                    status=TaskStatus.BLOCKED,
+                    error="recovery requires host reconciliation; task was not replayed",
+                )
+                blocked.append(task_id)
         self._refresh_pending()
+        return tuple(sorted(blocked))
 
     def _validate_restored_dependencies(self) -> None:
         executable = {

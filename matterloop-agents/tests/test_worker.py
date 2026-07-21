@@ -19,7 +19,15 @@ from matterloop_models import (
     ToolCall,
 )
 from matterloop_models.providers import DeepSeekChatContinuation
-from matterloop_tools import ToolContext, ToolRegistry, ToolResult, ToolSpec
+from matterloop_tools import (
+    ToolAccessScope,
+    ToolContext,
+    ToolEffect,
+    ToolPermissionDeniedError,
+    ToolRegistry,
+    ToolResult,
+    ToolSpec,
+)
 
 
 class StubTool:
@@ -48,6 +56,29 @@ class EchoTool:
     ) -> ToolResult:
         """返回带运行标识的确定性结果。"""
         return ToolResult(content=f"{context.run_id}:{arguments['text']}")
+
+
+class WriteTool:
+    """声明写副作用并记录是否越过注册表边界。"""
+
+    spec = ToolSpec(
+        name="write",
+        description="写入测试数据",
+        input_schema={"type": "object"},
+        default_effect=ToolEffect.WRITE,
+    )
+
+    def __init__(self) -> None:
+        self.invocations = 0
+
+    async def invoke(
+        self,
+        arguments: Mapping[str, object],
+        context: ToolContext,
+    ) -> ToolResult:
+        del arguments, context
+        self.invocations += 1
+        return ToolResult("written")
 
 
 class SwappingToolRegistry:
@@ -106,6 +137,7 @@ def test_worker_pins_model_during_tool_transaction_and_replaces_next_transaction
         assert first_result.output == "原事务步骤完成"
         assert tools.calls[0][0] == "echo"
         assert tools.calls[0][2].run_id == "run-1"
+        assert tools.calls[0][2].access_scope is ToolAccessScope.FULL
         assert first_model.requests[1].tool_outputs[0].output == "echo result"
         assert replacement.requests == ()
         assert first_result.metadata["total_tokens"] == 0
@@ -119,6 +151,37 @@ def test_worker_pins_model_during_tool_transaction_and_replaces_next_transaction
         assert replacement.requests[0].messages
 
     asyncio.run(scenario())
+
+
+async def test_worker_enforces_read_only_scope_before_write_tool_invocation() -> None:
+    model = FakeModelClient(
+        [
+            ModelResponse(
+                tool_calls=(ToolCall(call_id="call-write", name="write", arguments={}),),
+                response_id="response-write",
+            )
+        ]
+    )
+    models = ModelRegistry()
+    models.register("worker", model)
+    write_tool = WriteTool()
+    worker = ToolCallingWorker(
+        models,
+        ToolRegistry([write_tool]),
+        ToolCallingWorkerConfig(model="worker", tool_names=("write",)),
+    )
+    context = LoopContext(
+        LoopRequest(
+            goal="尝试写入",
+            metadata={"tool_access_scope": ToolAccessScope.READ_ONLY.value},
+        ),
+        run_id="child-run",
+    )
+
+    with pytest.raises(ToolPermissionDeniedError):
+        await worker.execute(PlanStep(description="写入", step_id="write-step"), context)
+
+    assert write_tool.invocations == 0
 
 
 def test_worker_propagates_opaque_deepseek_continuation_without_response_id() -> None:

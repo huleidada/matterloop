@@ -15,7 +15,7 @@ from matterloop_models import (
     ToolDefinition,
     ToolOutput,
 )
-from matterloop_tools import ToolContext, ToolRegistry
+from matterloop_tools import ToolAccessScope, ToolContext, ToolRegistry
 
 from matterloop_agents.config import ToolCallingWorkerConfig
 from matterloop_agents.errors import (
@@ -122,6 +122,7 @@ class ToolCallingWorker:
                             run_id=context.run_id,
                             step_id=step.step_id,
                             metadata={"goal": context.request.goal},
+                            access_scope=self._tool_access_scope(context),
                         ),
                     )
                     outputs.append(
@@ -199,3 +200,15 @@ class ToolCallingWorker:
         if not isinstance(value, (tuple, list)):
             return ()
         return tuple(item for item in value if isinstance(item, str) and item.strip())
+
+    @staticmethod
+    def _tool_access_scope(context: LoopContext) -> ToolAccessScope:
+        """读取由组合根或团队端点注入的工具访问范围。
+
+        普通主 Loop 没有该保留字段时保持完整访问；团队端点总是在所有业务元数据之后
+        强制写入 ``read_only``，因此任务不能通过 metadata 自行提权。
+        """
+        value = context.request.metadata.get("tool_access_scope")
+        if value is ToolAccessScope.READ_ONLY or value == ToolAccessScope.READ_ONLY.value:
+            return ToolAccessScope.READ_ONLY
+        return ToolAccessScope.FULL

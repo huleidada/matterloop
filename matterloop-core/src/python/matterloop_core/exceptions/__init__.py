@@ -12,6 +12,7 @@ from matterloop_core.exceptions.errors import (
     InvalidStateTransitionError,
     LoopNotFoundError,
     LoopNotResumableError,
+    LoopRequestConflictError,
     MatterLoopError,
     ResourceLimitExceededError,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "HumanResponseConflictError",
     "LoopNotFoundError",
     "LoopNotResumableError",
+    "LoopRequestConflictError",
     "MatterLoopError",
     "ResourceLimitExceededError",
 ]

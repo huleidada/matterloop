@@ -44,6 +44,10 @@ class LoopNotResumableError(MatterLoopError):
     """指定运行当前状态不允许恢复时抛出。"""
 
 
+class LoopRequestConflictError(MatterLoopError):
+    """同一运行标识被用于不同请求时抛出。"""
+
+
 class HumanInteractionNotPendingError(MatterLoopError):
     """提交的响应无法匹配当前待处理人工交互时抛出。"""
 

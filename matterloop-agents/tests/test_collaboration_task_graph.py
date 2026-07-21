@@ -127,23 +127,36 @@ def test_failed_task_blocks_all_transitive_dependants() -> None:
     assert graph.has_failures is True
 
 
-def test_recovery_preserves_attempt_and_releases_inflight_assignment() -> None:
-    """崩溃恢复应归还执行中任务，同时保留已消费尝试次数。"""
+def test_recovery_blocks_non_replayable_inflight_task() -> None:
+    """默认任务的执行状态不明确时不得重复调用 Agent。"""
     task = TaskSpec("task", "执行任务", "python")
     graph = TaskGraph((task,))
     graph.start("task", "worker")
     snapshot = TeamSnapshot(TeamRequest("恢复任务"), graph.states(), run_id="recover-run")
     restored = TaskGraph.from_snapshot(snapshot)
 
-    restored.recover_inflight()
+    blocked = restored.recover_inflight()
     recovered = restored.state("task")
-    restarted = restored.start("task", "worker-2")
+
+    assert blocked == ("task",)
+    assert recovered.status is TaskStatus.BLOCKED
+    assert recovered.attempt == 1
+    assert recovered.assigned_agent == "worker"
+
+
+def test_recovery_replays_only_explicitly_safe_task() -> None:
+    """宿主显式声明可重放后，恢复才允许开始下一次尝试。"""
+    task = TaskSpec("task", "只读任务", "python", replay_safe=True)
+    graph = TaskGraph((task,))
+    graph.start("task", "worker")
+
+    assert graph.recover_inflight() == ()
+    recovered = graph.state("task")
+    restarted = graph.start("task", "worker-2")
 
     assert recovered.status is TaskStatus.READY
     assert recovered.attempt == 1
-    assert recovered.assigned_agent is None
     assert restarted.attempt == 2
-    assert restarted.assigned_agent == "worker-2"
 
 
 def test_snapshot_restore_rejects_changed_task_definition() -> None:

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matterloop-policies"
-version = "0.1.0"
+version = "0.1.1"
 description = "MatterLoop 预算、重试、停止、审批与权限策略"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,9 +26,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "matterloop-core>=0.1.0,<0.2.0",
-    "matterloop-models>=0.1.0,<0.2.0",
-    "matterloop-tools>=0.1.0,<0.2.0",
+    "matterloop-core>=0.1.1,<0.2.0",
+    "matterloop-models>=0.1.1,<0.2.0",
+    "matterloop-tools>=0.1.1,<0.2.0",
 ]
 
 [project.urls]
@@ -36,6 +36,9 @@ Homepage = "https://github.com/huleidada/matterloop"
 Documentation = "https://github.com/huleidada/matterloop/tree/main/docs"
 Repository = "https://github.com/huleidada/matterloop"
 Issues = "https://github.com/huleidada/matterloop/issues"
+
+[project.optional-dependencies]
+dev = ["mypy>=1.10", "pytest>=8.0", "ruff>=0.5"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/python/matterloop_policies"]

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 import httpx
 
-from matterloop_tools.base import ToolContext, ToolResult, ToolSpec
+from matterloop_tools.base import ToolContext, ToolEffect, ToolResult, ToolSpec
 from matterloop_tools.errors import ToolConfigurationError, ToolInputError
 
 
@@ -81,6 +81,10 @@ class HttpTool:
                 "required": ["url"],
                 "additionalProperties": False,
             },
+            default_effect=ToolEffect.WRITE,
+            effect_argument="method",
+            effect_mapping={"GET": ToolEffect.READ},
+            effect_argument_default="GET",
         )
 
     @property

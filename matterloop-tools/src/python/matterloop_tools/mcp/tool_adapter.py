@@ -8,7 +8,7 @@ import re
 from collections.abc import Iterator, Mapping
 from typing import Protocol
 
-from matterloop_tools.base import ToolContext, ToolResult, ToolSpec
+from matterloop_tools.base import ToolContext, ToolEffect, ToolResult, ToolSpec
 from matterloop_tools.mcp.models import McpCallResult, McpContent, McpContentKind, McpToolDefinition
 
 _UNSAFE_TOOL_CHARACTERS = re.compile(r"[^A-Za-z0-9_-]+")
@@ -148,6 +148,7 @@ class McpToolAdapter:
             safe_mcp_tool_name(namespace, definition.name),
             description,
             definition.input_schema,
+            default_effect=ToolEffect.UNKNOWN,
         )
 
     @property

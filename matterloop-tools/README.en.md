@@ -18,6 +18,7 @@ pip install "matterloop-tools[mcp]"
 Agent
   └─ ToolRegistry.invoke(name, arguments, context)
        ├─ Pins the tool instance for this call
+       ├─ Enforces ToolAccessScope against ToolEffect
        ├─ ToolAuthorizer.authorize(...)
        └─ Tool.invoke(...)
             ├─ FileSystemTool / ShellTool / HttpTool
@@ -46,7 +47,10 @@ tools = ToolRegistry(
 
 When `ToolRegistry(tools, authorizer)` receives no authorizer, it uses
 `AllowAllToolAuthorizer`. That is convenient for tests but is not an appropriate production default.
-The authorizer should decide from trusted identity, tenant, tool name, arguments, and `ToolContext`.
+Regardless of the configured authorizer, a `READ_ONLY` context rejects `COMPUTE`, `WRITE`, and
+`UNKNOWN` before the authorizer runs. An authorizer cannot bypass this mandatory boundary. It should
+still make finer-grained decisions from trusted identity, tenant, tool name, arguments, and
+`ToolContext`.
 
 ## Tool protocol and lifecycle
 
@@ -62,10 +66,31 @@ class Tool(Protocol):
     ) -> ToolResult: ...
 ```
 
-- `ToolSpec(name, description, input_schema)` describes the model-visible invocation interface.
-- `ToolContext(run_id, step_id, metadata)` carries authorization and correlation data. `metadata`
-  accepts only JSON-compatible values and is recursively snapshotted before invocation.
+- `ToolSpec` describes the model-visible interface and the effect classification enforced by the
+  registry.
+- `ToolContext` carries authorization, correlation data, and an access scope that the business
+  authorizer cannot elevate. `metadata` accepts only JSON-compatible values and is recursively
+  snapshotted before invocation.
 - `ToolResult(content, is_error, metadata)` returns text output and safe diagnostics.
+
+| DTO | Field | Type | Required / default | Behavior and security |
+| --- | --- | --- | --- | --- |
+| `ToolSpec` | `name` | `str` | Required | Non-empty registry name. |
+| `ToolSpec` | `description` | `str` | Required | Non-empty model-visible description. |
+| `ToolSpec` | `input_schema` | `Mapping[str, object]` | Required | JSON Schema snapshot; the tool still validates locally. |
+| `ToolSpec` | `default_effect` | `ToolEffect` | `UNKNOWN` | Conservative effect when selection is missing, invalid, or unmatched. |
+| `ToolSpec` | `effect_argument` | `str \| None` | `None` | Selector such as `operation` or `method`. |
+| `ToolSpec` | `effect_mapping` | `Mapping[str, ToolEffect]` | Empty | Case-insensitive values, frozen for discovery and docs. |
+| `ToolSpec` | `effect_argument_default` | `str \| None` | `None` | Tool default when the selector is omitted, such as HTTP `GET`. |
+| `ToolContext` | `run_id` | `str` | Required | Non-empty Loop correlation identifier. |
+| `ToolContext` | `step_id` | `str \| None` | `None` | Optional plan-step identifier. |
+| `ToolContext` | `metadata` | `Mapping[str, object]` | Empty | Recursively snapshotted and cannot override `access_scope`. |
+| `ToolContext` | `access_scope` | `ToolAccessScope` | `FULL` | Main Loops retain governance; child Agents use `READ_ONLY`. |
+
+`ToolEffect` contains `READ/COMPUTE/WRITE/UNKNOWN`; `ToolAccessScope` contains `FULL/READ_ONLY`.
+An unlabeled custom tool is `UNKNOWN` and is therefore denied in read-only contexts.
+`effect_for(arguments)` supports catalog generation, audits, and tests; `ToolRegistry.invoke()` is the
+enforcement point.
 
 The Schema is for discovery; it does not mean that the registry automatically evaluates JSON Schema.
 Every custom tool must validate all arguments locally. Provider-side strict tools do not replace
@@ -235,6 +260,9 @@ default and supports `read/list/exists/stat/write`. Paths undergo lexical, resol
 component-by-component symlink checks. Writes use a temporary file in the same directory followed by
 an atomic replacement.
 
+The registry labels `read/list/exists/stat` as `READ` and `write` as `WRITE`. A read-only child Agent
+cannot write even when the tool instance was constructed with `allow_write=True`.
+
 It cannot eliminate TOCTOU, hard-link, or mount-change attacks from a malicious process on the same
 host. It also does not support binary data, deletion, moving, `mkdir`, or globbing. Use an isolated
 file service in adversarial environments.
@@ -245,6 +273,8 @@ file service in adversarial environments.
 accepts argv only and never uses `shell=True`. A command must be a bare program name in the allowlist.
 The default environment is empty, and stdout/stderr share one output budget.
 
+Every Shell call is `COMPUTE`, so a read-only child Agent is rejected before the sandbox starts.
+
 A program-name allowlist is not argument safety: `python -c`, test plugins, compilers, and package
 managers can still execute arbitrary code. `LocalProcessSandbox` limits only cwd, environment,
 timeout, and output; it is not a malicious-code isolation boundary.
@@ -254,6 +284,9 @@ timeout, and output; it is not a malicious-code isolation boundary.
 `HttpTool(allowed_hosts, allowed_methods, require_https, follow_redirects, max_redirects, max_timeout_seconds, max_response_bytes, max_request_bytes, allowed_headers, transport)`
 allows only HTTPS `GET` and exact host allowlisting by default and does not inherit system proxies.
 When redirects are enabled, every hop is revalidated.
+
+An omitted method and an explicit `GET` are `READ`; every other method is `WRITE`. Remote MCP tools
+default to `UNKNOWN` and remain under main-Loop governance. `SkillTool` marks `list/get` as `READ`.
 
 Host validation does not pin DNS results, prevent rebinding or private-network resolution, or forbid
 arbitrary ports on an allowed host. A strong SSRF boundary must additionally restrict CIDRs, ports,

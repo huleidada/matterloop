@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
-from matterloop_tools import ToolContext, ToolInputError, ToolRegistry
+from matterloop_tools import ToolAccessScope, ToolContext, ToolInputError, ToolRegistry
 from matterloop_tools.skills import (
     SkillAccessDeniedError,
     SkillAccessPolicy,
@@ -77,7 +77,7 @@ async def test_reference_tool_exposes_data_without_executing_skill_content(
         SkillAccessPolicy.from_names(["unsafe-text"]),
     )
     tools = ToolRegistry([SkillTool(adapter)])
-    context = ToolContext("run-1")
+    context = ToolContext("run-1", access_scope=ToolAccessScope.READ_ONLY)
 
     catalog_result = await tools.invoke(
         "skill_reference",

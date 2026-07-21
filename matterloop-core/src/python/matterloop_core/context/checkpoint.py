@@ -73,6 +73,18 @@ class LoopCheckpointCodec:
                 "approved_step_ids": sorted(context.approved_step_ids),
                 "replan_required": context.replan_required,
                 "completion_approved": context.completion_approved,
+                "active_operation_id": context.active_operation_id,
+                "pending_execution": (
+                    self._encode_execution(context.pending_execution)
+                    if context.pending_execution is not None
+                    else None
+                ),
+                "pending_attempt": context.pending_attempt,
+                "last_heartbeat_at": (
+                    context.last_heartbeat_at.isoformat()
+                    if context.last_heartbeat_at is not None
+                    else None
+                ),
                 "event_sequence": context.event_sequence,
                 "revision": context.revision,
                 "active_elapsed_seconds": context.active_elapsed_seconds,
@@ -104,6 +116,7 @@ class LoopCheckpointCodec:
             ]
             raw_plan = data.get("current_plan")
             raw_pending = data.get("pending_interaction")
+            raw_pending_execution = data.get("pending_execution")
             context = LoopContext(
                 request=request,
                 run_id=self._text(data.get("run_id"), "run_id"),
@@ -138,6 +151,22 @@ class LoopCheckpointCodec:
                 replan_required=self._boolean(data.get("replan_required"), "replan_required"),
                 completion_approved=self._boolean(
                     data.get("completion_approved"), "completion_approved"
+                ),
+                active_operation_id=self._optional_text(
+                    data.get("active_operation_id"), "active_operation_id"
+                ),
+                pending_execution=(
+                    None
+                    if raw_pending_execution is None
+                    else self._decode_execution(
+                        self._mapping(raw_pending_execution, "pending_execution")
+                    )
+                ),
+                pending_attempt=self._optional_integer(
+                    data.get("pending_attempt"), "pending_attempt"
+                ),
+                last_heartbeat_at=self._optional_datetime(
+                    data.get("last_heartbeat_at"), "last_heartbeat_at"
                 ),
                 event_sequence=self._integer(data.get("event_sequence"), "event_sequence"),
                 revision=self._integer(data.get("revision"), "revision"),
@@ -341,13 +370,7 @@ class LoopCheckpointCodec:
             "cycle": record.cycle,
             "step_index": record.step_index,
             "step": self._encode_step(record.step),
-            "execution": {
-                "output": record.execution.output,
-                "artifacts": [
-                    self._encode_artifact(artifact) for artifact in record.execution.artifacts
-                ],
-                "metadata": self._json_value(record.execution.metadata, "execution.metadata"),
-            },
+            "execution": self._encode_execution(record.execution),
             "verification": {
                 "passed": record.verification.passed,
                 "feedback": record.verification.feedback,
@@ -369,16 +392,7 @@ class LoopCheckpointCodec:
             cycle=self._integer(data.get("cycle"), "cycle"),
             step_index=self._integer(data.get("step_index"), "step_index"),
             step=self._decode_step(self._mapping(data.get("step"), "step")),
-            execution=ExecutionResult(
-                output=self._text(
-                    execution_data.get("output"), "execution.output", allow_empty=True
-                ),
-                artifacts=tuple(
-                    self._decode_artifact(self._mapping(item, "artifact"))
-                    for item in self._sequence(execution_data.get("artifacts"), "artifacts")
-                ),
-                metadata=self._metadata(execution_data.get("metadata"), "execution.metadata"),
-            ),
+            execution=self._decode_execution(execution_data),
             verification=VerificationResult(
                 passed=passed,
                 feedback=self._text(
@@ -396,6 +410,25 @@ class LoopCheckpointCodec:
                 ),
             ),
             attempt=self._integer(data.get("attempt"), "attempt"),
+        )
+
+    def _encode_execution(self, execution: ExecutionResult) -> dict[str, object]:
+        """编码可独立持久化、等待验证的执行结果。"""
+        return {
+            "output": execution.output,
+            "artifacts": [self._encode_artifact(item) for item in execution.artifacts],
+            "metadata": self._json_value(execution.metadata, "execution.metadata"),
+        }
+
+    def _decode_execution(self, data: Mapping[str, object]) -> ExecutionResult:
+        """解码执行结果，并复用记录采用的严格字段校验。"""
+        return ExecutionResult(
+            output=self._text(data.get("output"), "execution.output", allow_empty=True),
+            artifacts=tuple(
+                self._decode_artifact(self._mapping(item, "artifact"))
+                for item in self._sequence(data.get("artifacts"), "artifacts")
+            ),
+            metadata=self._metadata(data.get("metadata"), "execution.metadata"),
         )
 
     def _json_value(self, value: object, path: str) -> object:
@@ -479,6 +512,16 @@ class LoopCheckpointCodec:
             return None
         return self._datetime(value, field_name)
 
+    def _optional_text(self, value: object, field_name: str) -> str | None:
+        if value is None:
+            return None
+        return self._text(value, field_name)
+
+    def _optional_integer(self, value: object, field_name: str) -> int | None:
+        if value is None:
+            return None
+        return self._integer(value, field_name)
+
     def _optional_stop_reason(self, value: object) -> StopReason | None:
         if value is None:
             return None
@@ -500,6 +543,14 @@ class LoopCheckpointCodec:
             raise CheckpointSchemaError("checkpoint counters must not be negative")
         if context.active_elapsed_seconds < 0:
             raise CheckpointSchemaError("active_elapsed_seconds must not be negative")
+        if context.pending_attempt is not None and context.pending_attempt < 1:
+            raise CheckpointSchemaError("pending_attempt must be at least 1")
+        if context.pending_execution is not None and (
+            context.active_operation_id is None or context.pending_attempt is None
+        ):
+            raise CheckpointSchemaError(
+                "pending execution requires active_operation_id and pending_attempt"
+            )
         if context.current_plan is not None and context.current_step_index > len(
             context.current_plan.steps
         ):

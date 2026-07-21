@@ -2,7 +2,15 @@
 
 import httpx
 import pytest
-from matterloop_tools import HttpTool, ToolContext, ToolInputError
+from matterloop_tools import (
+    HttpTool,
+    ToolAccessScope,
+    ToolContext,
+    ToolEffect,
+    ToolInputError,
+    ToolPermissionDeniedError,
+    ToolRegistry,
+)
 
 
 async def test_http_allows_https_host_and_limits_body() -> None:
@@ -19,6 +27,57 @@ async def test_http_allows_https_host_and_limits_body() -> None:
 
     assert result.content == "abcd"
     assert result.metadata["truncated"] is True
+
+
+async def test_http_classifies_default_get_as_read_and_other_methods_as_write() -> None:
+    tool = HttpTool(
+        allowed_hosts={"api.example.com"},
+        allowed_methods={"GET", "POST", "DELETE"},
+    )
+
+    assert tool.spec.effect_for({"url": "https://api.example.com"}) is ToolEffect.READ
+    assert (
+        tool.spec.effect_for({"url": "https://api.example.com", "method": "GET"}) is ToolEffect.READ
+    )
+    assert (
+        tool.spec.effect_for({"url": "https://api.example.com", "method": "POST"})
+        is ToolEffect.WRITE
+    )
+    assert (
+        tool.spec.effect_for({"url": "https://api.example.com", "method": "DELETE"})
+        is ToolEffect.WRITE
+    )
+    await tool.aclose()
+
+
+async def test_read_only_scope_rejects_http_post_before_network_call() -> None:
+    network_calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal network_calls
+        network_calls += 1
+        return httpx.Response(200, text="ok", request=request)
+
+    registry = ToolRegistry(
+        [
+            HttpTool(
+                allowed_hosts={"api.example.com"},
+                allowed_methods={"GET", "POST"},
+                transport=httpx.MockTransport(handler),
+            )
+        ]
+    )
+    context = ToolContext("child", access_scope=ToolAccessScope.READ_ONLY)
+
+    with pytest.raises(ToolPermissionDeniedError):
+        await registry.invoke(
+            "http",
+            {"url": "https://api.example.com/data", "method": "POST", "body": "payload"},
+            context=context,
+        )
+
+    assert network_calls == 0
+    await registry.aclose()
 
 
 async def test_http_rejects_plaintext_and_unlisted_host() -> None:

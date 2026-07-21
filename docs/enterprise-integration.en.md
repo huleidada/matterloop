@@ -47,8 +47,8 @@ Celery and a pull-based QueueBackend are alternatives, not two queue layers:
 | Audit event | `EventPublisher` / `TeamEventPublisher` | Why did state change, and what is the event order? | Authoritative state storage |
 
 These interfaces may use the same database, but they need separate schemas, permissions, retention periods, and
-transaction semantics. The current Redis integration does not provide CheckpointStore; a multi-process production
-deployment must supply revision CAS separately.
+transaction semantics. The Redis integration provides single-key revision CAS through `RedisCheckpointStore`; a host
+using another database must inject an equivalent persistent implementation.
 
 ## Two standard deployment topologies
 
@@ -223,7 +223,7 @@ Do not test only the successful path before launch. At minimum, verify:
 
 | Failure | Expected result |
 | --- | --- |
-| Worker crashes after a tool side effect but before state commit | The message can be redelivered without silently duplicating the side effect; the tool deduplicates by idempotency key, and deployment policy identifies and handles the active checkpoint because Core does not take it over automatically |
+| Worker crashes after a tool side effect but before state commit | Core retains a reconciliation point under `active_operation_id` and enters `RECOVERY_REQUIRED` without blind replay; after reconciling a saved result it continues from `VERIFYING` |
 | Two requests submit human feedback concurrently | One revision CAS succeeds; the other receives an idempotent no-op or a conflict |
 | A long call remains active during a model/tool hot swap | Old call finishes, new call uses the new instance, and the old resource then closes |
 | Audit backend is unavailable | Progress is blocked or an explicit alert is raised according to policy; loss is not silent |
@@ -235,7 +235,7 @@ Do not test only the successful path before launch. At minimum, verify:
 
 - The FastAPI integration has no route for submitting `HumanResponse` and does not return a pending interaction. A
   complete HTTP HITL flow requires an authenticated application endpoint.
-- The Redis integration does not provide checkpoints, long-term memory, a Worker, lease renewal, TTLs, or cleanup APIs.
+- The Redis integration provides no long-term memory, Worker, lease renewal, TTL, or cleanup API; checkpoints guarantee only single-key revision CAS.
 - Celery run claims do not renew; `claim lease` must exceed the longest normal task duration.
 - In-memory Stores, Queues, Repositories, UsageLedger, and TeamRepository are suitable only for tests or
   single-process execution.

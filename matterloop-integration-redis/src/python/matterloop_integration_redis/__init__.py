@@ -1,5 +1,6 @@
-"""MatterLoop Redis 队列、运行仓储和事件集成公共 API。"""
+"""MatterLoop Redis 检查点、队列、运行仓储和事件集成公共 API。"""
 
+from matterloop_integration_redis.checkpoint import RedisCheckpointStore
 from matterloop_integration_redis.client import AsyncRedisClient, RedisConfig
 from matterloop_integration_redis.codec import RedisPayloadCodec
 from matterloop_integration_redis.errors import RedisIntegrationError, RedisPayloadError
@@ -9,6 +10,7 @@ from matterloop_integration_redis.repository import RedisRunRepository
 
 __all__ = [
     "AsyncRedisClient",
+    "RedisCheckpointStore",
     "RedisConfig",
     "RedisEventPublisher",
     "RedisIntegrationError",

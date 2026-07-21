@@ -8,7 +8,7 @@ from pathlib import Path
 
 from matterloop_runtime import LocalProcessSandbox, ProcessRequest, Sandbox
 
-from matterloop_tools.base import ToolContext, ToolResult, ToolSpec
+from matterloop_tools.base import ToolContext, ToolEffect, ToolResult, ToolSpec
 from matterloop_tools.errors import ToolConfigurationError, ToolInputError
 
 
@@ -72,6 +72,7 @@ class ShellTool:
                 "required": ["argv"],
                 "additionalProperties": False,
             },
+            default_effect=ToolEffect.COMPUTE,
         )
 
     @property

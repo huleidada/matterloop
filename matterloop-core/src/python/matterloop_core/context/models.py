@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from math import isfinite
 from types import MappingProxyType
 from uuid import uuid4
 
@@ -47,8 +48,10 @@ class LoopLimits:
             raise ValueError("max_attempts must be at least 1")
         if self.max_steps_per_plan < 1:
             raise ValueError("max_steps_per_plan must be at least 1")
-        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be greater than 0")
+        if self.timeout_seconds is not None and (
+            not isfinite(self.timeout_seconds) or self.timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be finite and greater than 0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,6 +217,10 @@ class LoopContext:
     approved_step_ids: set[str] = field(default_factory=set)
     replan_required: bool = False
     completion_approved: bool = False
+    active_operation_id: str | None = None
+    pending_execution: ExecutionResult | None = None
+    pending_attempt: int | None = None
+    last_heartbeat_at: datetime | None = None
     event_sequence: int = 0
     revision: int = 0
     active_elapsed_seconds: float = 0
@@ -246,6 +253,10 @@ class LoopContext:
             approved_step_ids=set(self.approved_step_ids),
             replan_required=self.replan_required,
             completion_approved=self.completion_approved,
+            active_operation_id=self.active_operation_id,
+            pending_execution=self.pending_execution,
+            pending_attempt=self.pending_attempt,
+            last_heartbeat_at=self.last_heartbeat_at,
             event_sequence=self.event_sequence,
             revision=self.revision,
             active_elapsed_seconds=self.active_elapsed_seconds,
@@ -270,6 +281,8 @@ class LoopResult:
     error: str = ""
     pending_interaction: HumanInteractionRequest | None = None
     human_interactions: tuple[HumanInteractionRecord, ...] = ()
+    active_operation_id: str | None = None
+    last_heartbeat_at: datetime | None = None
     revision: int = 0
     event_sequence: int = 0
 
@@ -299,6 +312,8 @@ def result_from_context(context: LoopContext) -> LoopResult:
         error=context.error,
         pending_interaction=context.pending_interaction,
         human_interactions=tuple(context.human_interactions),
+        active_operation_id=context.active_operation_id,
+        last_heartbeat_at=context.last_heartbeat_at,
         revision=context.revision,
         event_sequence=context.event_sequence,
     )

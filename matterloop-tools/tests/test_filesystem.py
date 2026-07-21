@@ -1,7 +1,14 @@
 """文件系统工具边界与原子写入测试。"""
 
 import pytest
-from matterloop_tools import FileSystemTool, ToolContext, ToolInputError
+from matterloop_tools import (
+    FileSystemTool,
+    ToolAccessScope,
+    ToolContext,
+    ToolInputError,
+    ToolPermissionDeniedError,
+    ToolRegistry,
+)
 
 
 async def test_filesystem_is_read_only_by_default(tmp_path) -> None:
@@ -26,6 +33,28 @@ async def test_filesystem_reads_and_atomically_writes_within_root(tmp_path) -> N
 
     assert result.content == "你好"
     assert not tuple(tmp_path.glob(".file.txt.*"))
+
+
+async def test_read_only_scope_allows_reads_but_denies_writes(tmp_path) -> None:
+    target = tmp_path / "file.txt"
+    target.write_text("original", encoding="utf-8")
+    registry = ToolRegistry([FileSystemTool(tmp_path, allow_write=True)])
+    context = ToolContext("child", access_scope=ToolAccessScope.READ_ONLY)
+
+    result = await registry.invoke(
+        "filesystem",
+        {"operation": "read", "path": "file.txt"},
+        context=context,
+    )
+    with pytest.raises(ToolPermissionDeniedError):
+        await registry.invoke(
+            "filesystem",
+            {"operation": "write", "path": "file.txt", "content": "changed"},
+            context=context,
+        )
+
+    assert result.content == "original"
+    assert target.read_text(encoding="utf-8") == "original"
 
 
 async def test_filesystem_rejects_parent_and_symlink_escape(tmp_path) -> None:

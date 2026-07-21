@@ -15,6 +15,8 @@ class LoopEventType(str, Enum):
 
     LOOP_STARTED = "loop.started"
     LOOP_RESUMED = "loop.resumed"
+    LOOP_RECOVERED = "loop.recovered"
+    LOOP_HEARTBEAT = "loop.heartbeat"
     PLANNING_STARTED = "planning.started"
     PLAN_CREATED = "plan.created"
     APPROVAL_REQUESTED = "approval.requested"
@@ -28,6 +30,8 @@ class LoopEventType(str, Enum):
     LOOP_PAUSED = "loop.paused"
     COMPONENT_RETRYING = "component.retrying"
     EXECUTION_STARTED = "execution.started"
+    EXECUTION_DISPATCHED = "execution.dispatched"
+    EXECUTION_COMPLETED = "execution.completed"
     VERIFICATION_STARTED = "verification.started"
     ITERATION_COMPLETED = "iteration.completed"
     COMPLETION_EVALUATION_STARTED = "completion.evaluation_started"

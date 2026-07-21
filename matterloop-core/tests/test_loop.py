@@ -38,6 +38,8 @@ def test_loop_completes_and_emits_ordered_events() -> None:
         LoopEventType.PLANNING_STARTED,
         LoopEventType.PLAN_CREATED,
         LoopEventType.EXECUTION_STARTED,
+        LoopEventType.EXECUTION_DISPATCHED,
+        LoopEventType.EXECUTION_COMPLETED,
         LoopEventType.VERIFICATION_STARTED,
         LoopEventType.ITERATION_COMPLETED,
         LoopEventType.LOOP_COMPLETED,

@@ -363,9 +363,9 @@ async def test_external_coroutine_cancellation_persists_cancelled_snapshot() -> 
 
 
 async def test_resume_recovers_orphaned_running_task_without_replanning() -> None:
-    """进程崩溃留下的 RUNNING 节点应归还租约并从下一次尝试恢复。"""
+    """只有显式可重放的 RUNNING 节点才从下一次尝试恢复。"""
     repository = InMemoryTeamRepository()
-    task = TaskSpec("task", "恢复执行", "python")
+    task = TaskSpec("task", "恢复执行", "python", replay_safe=True)
     await repository.create(
         TeamSnapshot(
             TeamRequest("恢复运行"),
@@ -389,6 +389,35 @@ async def test_resume_recovers_orphaned_running_task_without_replanning() -> Non
     assert result.status is TeamStatus.COMPLETED
     assert worker.calls[0].attempt == 2
     assert worker.calls[0].previous_error == "recovered from interrupted execution"
+
+
+async def test_resume_blocks_ambiguous_running_task_without_agent_replay() -> None:
+    """默认任务崩溃后进入对账阻塞状态，不得再次调用替代 Agent。"""
+    repository = InMemoryTeamRepository()
+    task = TaskSpec("task", "不可重复执行", "python")
+    await repository.create(
+        TeamSnapshot(
+            TeamRequest("恢复运行"),
+            (
+                TaskState(
+                    task,
+                    status=TaskStatus.RUNNING,
+                    attempt=1,
+                    assigned_agent="crashed-worker",
+                ),
+            ),
+            run_id="ambiguous-running",
+            status=TeamStatus.RUNNING,
+        )
+    )
+    worker = _endpoint("replacement-worker", "python")
+    orchestrator = _orchestrator((task,), (worker,), repository=repository)
+
+    result = await orchestrator.resume("ambiguous-running")
+
+    assert result.status is TeamStatus.BLOCKED
+    assert result.stop_reason is TeamStopReason.RECOVERY_REQUIRED
+    assert worker.calls == []
 
 
 async def test_resume_and_cancel_support_empty_orphaned_planning_snapshot() -> None:
@@ -753,12 +782,21 @@ async def test_loop_agent_endpoint_maps_injected_runtime_without_environment_acc
     endpoint = LoopAgentEndpoint(
         AgentSpec("loop-agent", frozenset({"python"})),
         loop_runtime,
-        metadata={"source": "explicit"},
+        metadata={"source": "explicit", "tool_access_scope": "full"},
     )
     context = AgentTaskContext(
         team_run_id="team-run",
-        request=TeamRequest("完成团队目标", acceptance_criteria=("团队验收",)),
-        task=TaskSpec("task", "完成子任务", "python"),
+        request=TeamRequest(
+            "完成团队目标",
+            acceptance_criteria=("团队验收",),
+            metadata={"tool_access_scope": "full"},
+        ),
+        task=TaskSpec(
+            "task",
+            "完成子任务",
+            "python",
+            metadata={"tool_access_scope": "full"},
+        ),
         agent_id="loop-agent",
         attempt=1,
     )
@@ -771,3 +809,4 @@ async def test_loop_agent_endpoint_maps_injected_runtime_without_environment_acc
     assert loop_runtime.request.goal == "完成子任务"
     assert loop_runtime.request.acceptance_criteria == ("团队验收",)
     assert loop_runtime.request.metadata["source"] == "explicit"
+    assert loop_runtime.request.metadata["tool_access_scope"] == "read_only"

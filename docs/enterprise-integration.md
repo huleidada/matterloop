@@ -42,8 +42,8 @@ Celery 和拉取式 QueueBackend 是两个方案，不是两层队列：
 | 长期记忆 | `MemoryStore` | Agent 可以检索哪些历史信息 | 任何状态机存储 |
 | 审计事件 | `EventPublisher` / `TeamEventPublisher` | 状态为何变化、事件顺序是什么 | 权威状态存储 |
 
-这些接口可以落在同一种数据库里，但要有独立 schema、权限、保留期和事务语义。Redis 集成当前不
-提供 CheckpointStore；多进程生产环境必须另行实现 revision CAS。
+这些接口可以落在同一种数据库里，但要有独立 schema、权限、保留期和事务语义。Redis 集成提供
+`RedisCheckpointStore` 的单 Key revision CAS；使用其他数据库时仍须由宿主注入等价持久实现。
 
 ## 两种标准部署
 
@@ -209,7 +209,7 @@ OpenTelemetry 的 Provider、Exporter、采样与资源属性由应用配置。T
 
 | 故障 | 期望结果 |
 | --- | --- |
-| Worker 在工具副作用后、状态提交前崩溃 | 消息可重投但不能静默重放副作用；工具幂等去重，部署策略识别并处置活跃 checkpoint（Core 不自动接管） |
+| Worker 在工具副作用后、状态提交前崩溃 | Core 按 `active_operation_id` 保留对账点并进入 `RECOVERY_REQUIRED`，不会盲目重放；确认已有结果后从 `VERIFYING` 继续 |
 | 两个请求同时提交人工反馈 | 一个 revision CAS 成功；另一个得到幂等 no-op 或冲突 |
 | 模型/工具热替换时仍有长调用 | 旧调用完成，新调用使用新实例，旧资源随后关闭 |
 | 审计后端不可用 | 按选定策略阻止推进或明确告警，不静默丢失 |
@@ -221,7 +221,7 @@ OpenTelemetry 的 Provider、Exporter、采样与资源属性由应用配置。T
 
 - FastAPI 集成没有提交 `HumanResponse` 的路由，也不返回 pending interaction；完整 HTTP HITL 需要
   应用补充受鉴权端点。
-- Redis 集成没有 checkpoint、长期记忆、Worker、租约续期、TTL 或清理 API。
+- Redis 集成没有长期记忆、Worker、租约续期、TTL 或清理 API；Checkpoint 仅保证单 Key revision CAS。
 - Celery 运行认领没有续租；claim lease 必须大于正常最长任务时间。
 - 内存 Store、Queue、Repository、UsageLedger 和 TeamRepository 只适合测试或单进程运行。
 - production preset 返回控制面与 worker runtime，但不会启动消费循环或部署进程。

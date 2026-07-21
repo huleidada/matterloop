@@ -56,6 +56,11 @@ record = await runtime.wait(run_id, timeout_seconds=30)
 event queries; it does not execute jobs. A separate Worker must consume commands, invoke `AsyncRuntime`, commit the
 result through repository CAS, and then acknowledge or release the message.
 
+When an explicit `run_id` is supplied, `submit()` treats it as an idempotency key. Repeating the same `run_id` and
+the same `LoopRequest` returns the existing ID without another enqueue. Binding a different request to that ID raises
+`RunRequestConflictError`. This guarantee depends on the atomic uniqueness constraint of `RunRepository.create()`;
+a read-before-write check is not an adequate replacement.
+
 ## Human feedback
 
 Runtime only forwards Core semantics:
@@ -75,12 +80,20 @@ external side effects.
 
 - `QueueProducer` provides only `enqueue/cancel` and suits push systems such as Celery.
 - `QueueBackend` also provides `lease/acknowledge/release` for actively polling Workers.
+- `RenewableQueueBackend` additionally provides `renew(lease, lease_seconds)`. A long-running Worker must renew before
+  expiry and replace its old snapshot with the returned `QueueLease`; an old snapshot or expired lease cannot be
+  acknowledged, released, or renewed.
 - `RunRepository` provides `create/get/list/compare_and_set`.
 - `RunEventReader` reads events in pages using an exclusive cursor.
 
 `InMemoryQueueBackend` and `InMemoryRunRepository` are intended only for tests and single-process development. An
-expired lease is recovered during the next `lease()` call; there is no heartbeat, dead-letter queue, or cross-process
-notification.
+expired lease is recovered during the next queue operation. The backend supports lease renewal, but it provides no
+automatic heartbeat, dead-letter queue, or cross-process notification. A production Worker should call `renew()`
+within the lease window; after renewal fails, it must stop committing side effects and terminal state.
+
+`wait(timeout_seconds, poll_interval_seconds)`, `lease(lease_seconds)`, `renew(lease_seconds)`, and
+`release(delay_seconds)` all reject NaN and positive or negative infinity. A wait timeout of `0` performs one immediate
+check. Poll intervals and lease durations must be greater than `0`; release delays must be non-negative.
 
 <details>
 <summary>Queue data structure reference</summary>
@@ -96,6 +109,11 @@ notification.
 
 `wait()` also returns for PAUSED and BLOCKED because they are settled states. Only completed, failed, cancelled, and
 timed_out are terminal states.
+
+`QueueRuntime` writes state through version CAS and accepts only the predecessor states declared by each action. If a
+concurrent Worker has already committed a terminal state, cancellation, resume, and failure rollback do not overwrite
+it. Sixteen consecutive CAS conflicts raise `RunUpdateConflictError`; the host should reread the record before deciding
+whether to retry.
 
 </details>
 
@@ -151,7 +169,8 @@ machine, or remote sandbox that implements the `Sandbox` protocol.
 
 A closed facade raises `RuntimeClosedError`; a duplicate run ID raises `DuplicateRunError`; attempts to resume a
 missing or non-resumable run raise `RunNotFoundError` and `RunNotResumableError`; cwd escape raises
-`SandboxPathError`.
+`SandboxPathError`. A run ID bound to a different request raises `RunRequestConflictError`; persistent CAS contention
+raises `RunUpdateConflictError`; renewing a stale lease raises `QueueLeaseLostError`.
 
 Runtime does not read environment variables or create Redis, Celery, database, or model clients. The recommended
 shutdown order is: stop accepting new requests, stop delivery, drain or cancel Workers, release leases, close Runtime,

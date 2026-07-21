@@ -1,6 +1,6 @@
 [project]
 name = "matterloop-workspace"
-version = "0.1.0"
+version = "0.1.1"
 description = "MatterLoop 多模块组件工程工作区"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,13 +15,13 @@ dependencies = [
     "matterloop-policies",
     "matterloop-presets",
     "matterloop-runtime",
-    "matterloop-tools",
+    "matterloop-tools[mcp]",
 ]
 
 [dependency-groups]
 dev = [
-    "build>=1.2",
-    "httpx2>=2",
+    "build>=1.2,!=1.5.1",
+    "httpx2>=2,<3",
     "mypy>=1.10",
     "packaging>=24",
     "pytest>=8.0",

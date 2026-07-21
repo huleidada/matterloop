@@ -90,6 +90,10 @@ def test_checkpoint_round_trip_preserves_resume_state() -> None:
             )
         ],
         approved_step_ids={"step-1"},
+        active_operation_id="run-1:1:step-2",
+        pending_execution=ExecutionResult("等待验证"),
+        pending_attempt=3,
+        last_heartbeat_at=now,
         event_sequence=9,
         revision=8,
         active_elapsed_seconds=1.25,
@@ -110,6 +114,10 @@ def test_checkpoint_round_trip_preserves_resume_state() -> None:
     assert restored.pending_interaction == pending_interaction
     assert restored.human_interactions == context.human_interactions
     assert restored.approved_step_ids == {"step-1"}
+    assert restored.active_operation_id == "run-1:1:step-2"
+    assert restored.pending_execution == ExecutionResult("等待验证")
+    assert restored.pending_attempt == 3
+    assert restored.last_heartbeat_at == now
     assert restored.event_sequence == 9
     assert restored.revision == 8
     assert restored.active_elapsed_seconds == 1.25

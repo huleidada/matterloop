@@ -43,6 +43,7 @@ class StopReason(str, Enum):
     TIMED_OUT = "timed_out"
     COMPONENT_ERROR = "component_error"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    RECOVERY_REQUIRED = "recovery_required"
 
 
 class ResumeMode(str, Enum):

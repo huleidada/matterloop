@@ -17,7 +17,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
-      - run: uv sync --all-extras --dev --frozen
+      - run: uv lock --check
+      - run: uv sync --all-extras --dev --locked
+      - run: uv pip check --python .venv/bin/python
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run mypy
@@ -34,7 +36,9 @@ jobs:
         with:
           python-version: "3.13"
           enable-cache: true
-      - run: uv sync --all-extras --dev --frozen
+      - run: uv lock --check
+      - run: uv sync --all-extras --dev --locked
+      - run: uv pip check --python .venv/bin/python
       - name: Build every distribution
         shell: bash
         run: |
@@ -70,7 +74,8 @@ jobs:
             environment=".wheel-test-${module}"
             uv venv "$environment" --python 3.13
             uv pip install --python "$environment/bin/python" --find-links wheelhouse --constraint scripts/wheel-constraints.txt "$wheel"
-            "$environment/bin/python" scripts/verify_imports.py "$module"
+            uv pip check --python "$environment/bin/python"
+            "$environment/bin/python" -I scripts/verify_imports.py "$module"
           done
       - name: Verify functional extras in isolation
         shell: bash
@@ -78,9 +83,16 @@ jobs:
           set -euo pipefail
           models_wheel="$(find wheelhouse -maxdepth 1 -name 'matterloop_models-*.whl' -print -quit)"
           observability_wheel="$(find wheelhouse -maxdepth 1 -name 'matterloop_observability-*.whl' -print -quit)"
+          tools_wheel="$(find wheelhouse -maxdepth 1 -name 'matterloop_tools-*.whl' -print -quit)"
           uv venv .wheel-test-openai --python 3.13
           uv pip install --python .wheel-test-openai/bin/python --constraint scripts/wheel-constraints.txt "${models_wheel}[openai]"
+          uv pip check --python .wheel-test-openai/bin/python
           .wheel-test-openai/bin/python -c "import matterloop_models.providers, openai"
           uv venv .wheel-test-otel --python 3.13
           uv pip install --python .wheel-test-otel/bin/python --find-links wheelhouse --constraint scripts/wheel-constraints.txt "${observability_wheel}[otel]"
+          uv pip check --python .wheel-test-otel/bin/python
           .wheel-test-otel/bin/python -c "import matterloop_observability, opentelemetry"
+          uv venv .wheel-test-mcp --python 3.13
+          uv pip install --python .wheel-test-mcp/bin/python --find-links wheelhouse --constraint scripts/wheel-constraints.txt "${tools_wheel}[mcp]"
+          uv pip check --python .wheel-test-mcp/bin/python
+          .wheel-test-mcp/bin/python -c "import matterloop_tools.mcp, mcp.client.session, mcp.types"

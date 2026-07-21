@@ -5,7 +5,16 @@ import sys
 from pathlib import Path
 
 import pytest
-from matterloop_tools import ShellTool, ToolConfigurationError, ToolContext, ToolInputError
+from matterloop_tools import (
+    ShellTool,
+    ToolAccessScope,
+    ToolConfigurationError,
+    ToolContext,
+    ToolEffect,
+    ToolInputError,
+    ToolPermissionDeniedError,
+    ToolRegistry,
+)
 
 
 async def test_shell_treats_metacharacters_as_plain_argument(tmp_path) -> None:
@@ -31,6 +40,35 @@ async def test_shell_treats_metacharacters_as_plain_argument(tmp_path) -> None:
     payload = json.loads(result.content)
     assert "$(touch" in payload["stdout"]
     assert not marker.exists()
+
+
+def test_shell_is_classified_as_compute(tmp_path) -> None:
+    tool = ShellTool(tmp_path, allowed_commands={"python"})
+
+    assert tool.spec.effect_for({"argv": ["python", "-V"]}) is ToolEffect.COMPUTE
+
+
+async def test_read_only_scope_rejects_shell_before_sandbox_execution(tmp_path) -> None:
+    class UnreachableSandbox:
+        async def run(self, request):
+            raise AssertionError(f"sandbox must not run: {request}")
+
+    registry = ToolRegistry(
+        [
+            ShellTool(
+                tmp_path,
+                allowed_commands={"python"},
+                sandbox=UnreachableSandbox(),
+            )
+        ]
+    )
+
+    with pytest.raises(ToolPermissionDeniedError):
+        await registry.invoke(
+            "shell",
+            {"argv": ["python", "-V"]},
+            context=ToolContext("child", access_scope=ToolAccessScope.READ_ONLY),
+        )
 
 
 async def test_shell_rejects_command_path_and_unlisted_environment(tmp_path) -> None:

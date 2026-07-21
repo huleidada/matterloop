@@ -78,11 +78,11 @@ python -m pip install --index-url https://pypi.org/simple \
 
 # Production and CI: pin an artifact version that you have validated
 python -m pip install --index-url https://pypi.org/simple \
-  "matterloop-presets==0.1.0"
+  "matterloop-presets==0.1.1"
 ```
 
-All 12 `v0.1.0` distributions provide a wheel, an sdist, and Trusted Publishing attestations. See the
-[GitHub Release](https://github.com/huleidada/matterloop/releases/tag/v0.1.0) for the corresponding release record.
+All 12 `v0.1.1` distributions provide a wheel, an sdist, and Trusted Publishing attestations. See the
+[GitHub Release](https://github.com/huleidada/matterloop/releases/tag/v0.1.1) for the corresponding release record.
 Install into a virtual environment and use `python -m pip` so the artifacts go to the intended Python interpreter.
 
 ### Install components on demand
@@ -103,7 +103,7 @@ be pulled directly from PyPI, and pip resolves its declared MatterLoop dependenc
 | Presets | [`matterloop-presets`](https://pypi.org/project/matterloop-presets/) | `matterloop_presets` | Install every foundation module and use preset compositions |
 | FastAPI | [`matterloop-integration-fastapi`](https://pypi.org/project/matterloop-integration-fastapi/) | `matterloop_integration_fastapi` | HTTP control-plane routes |
 | Celery | [`matterloop-integration-celery`](https://pypi.org/project/matterloop-integration-celery/) | `matterloop_integration_celery` | Celery push-based task transport |
-| Redis | [`matterloop-integration-redis`](https://pypi.org/project/matterloop-integration-redis/) | `matterloop_integration_redis` | Redis pull queue, run repository, and event publishing |
+| Redis | [`matterloop-integration-redis`](https://pypi.org/project/matterloop-integration-redis/) | `matterloop_integration_redis` | Redis checkpoints, pull queue, run repository, and event publishing |
 
 For example, install only Core and the model abstraction, or add one queue integration to the base composition:
 
@@ -111,14 +111,14 @@ For example, install only Core and the model abstraction, or add one queue integ
 python -m pip install "matterloop-core>=0.1.0,<0.2.0" \
   "matterloop-models>=0.1.0,<0.2.0"
 
-python -m pip install "matterloop-presets==0.1.0" \
-  "matterloop-integration-fastapi==0.1.0" \
-  "matterloop-integration-celery==0.1.0"
+python -m pip install "matterloop-presets==0.1.1" \
+  "matterloop-integration-fastapi==0.1.1" \
+  "matterloop-integration-celery==0.1.1"
 ```
 
-Celery push queues and Redis pull queues are alternative task transports; select one for a deployment. Redis run
-repositories and event publishers can be combined with Celery, but the Redis integration does not provide a
-persistent `CheckpointStore`.
+Celery push queues and Redis pull queues are alternative task transports; select one for a deployment.
+`RedisCheckpointStore`, Redis run repositories, and event publishers can be combined with Celery; checkpoints and
+control-plane run records retain separate responsibilities.
 
 ### Optional capabilities
 
@@ -146,7 +146,7 @@ index:
 ```bash
 python -m pip install \
   --index-url https://packages.example.com/repository/pypi/simple \
-  "matterloop-presets==0.1.0"
+  "matterloop-presets==0.1.1"
 ```
 
 - Use one enterprise index that proxies public PyPI, or ensure it contains all eight foundation distributions and
@@ -164,7 +164,7 @@ Air-gapped environments can install from a scanned and approved wheelhouse witho
 
 ```bash
 python -m pip install --no-index --find-links /opt/matterloop-wheelhouse \
-  "matterloop-presets==0.1.0"
+  "matterloop-presets==0.1.1"
 ```
 
 ### Verify the installation
@@ -177,7 +177,7 @@ python -m pip check
 python -c "from importlib.metadata import version; import matterloop_core, matterloop_presets; print(version('matterloop-presets'))"
 ```
 
-The expected version is `0.1.0`, and `pip check` should report `No broken requirements found`.
+The expected version is `0.1.1`, and `pip check` should report `No broken requirements found`.
 
 ## Quick start
 
@@ -243,8 +243,8 @@ Four presets provide practical starting points:
   system calls.
 - Tool registries allow calls when no Authorizer is supplied. Production deployments must integrate identity, tenant
   permissions, and auditing.
-- The Redis integration does not provide a CheckpointStore. Celery and the Redis pull queue are alternative transport
-  models and should not consume the same work together.
+- Redis checkpoints provide no TTL, listing, deletion, or cross-key transaction. Celery and the Redis pull queue are
+  alternative transport models and should not consume the same work together.
 - The FastAPI integration currently has no route for submitting human feedback. Applications must add that surface to
   complete HTTP HITL.
 - `UsageLedger` is an atomic in-process ledger, not a cross-instance quota service or a provider invoice.
@@ -266,9 +266,7 @@ uv build --all-packages
 ```
 
 Python 3.10–3.14 is supported. Every public package includes `py.typed`; public comments and Google-style Docstrings
-are written in Chinese, while public Markdown is maintained in Simplified Chinese and English. The isolated paid
-smoke-test workflow is documented in
-[`docs/live-deepseek.en.md`](docs/live-deepseek.en.md).
+are written in Chinese, while public Markdown is maintained in Simplified Chinese and English.
 
 ## Documentation
 

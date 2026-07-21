@@ -10,6 +10,8 @@ from datetime import timedelta
 
 import pytest
 from matterloop_core import (
+    CheckpointConflictError,
+    CheckpointStore,
     LoopContext,
     LoopEvent,
     LoopEventType,
@@ -19,6 +21,8 @@ from matterloop_core import (
     result_from_context,
 )
 from matterloop_integration_redis import (
+    AsyncRedisClient,
+    RedisCheckpointStore,
     RedisConfig,
     RedisEventPublisher,
     RedisPayloadCodec,
@@ -52,6 +56,7 @@ class FakeRedis:
         self.run_leases: dict[str, str] = {}
         self.cancelled: set[str] = set()
         self.streams: dict[str, list[tuple[str, Mapping[str, object]]]] = {}
+        self.last_checkpoint_arguments: tuple[object, ...] | None = None
         self.closed = False
 
     async def eval(self, script: str, numkeys: int, *keys_and_args: object) -> object:
@@ -130,6 +135,40 @@ class FakeRedis:
             if run_id not in self.run_leases:
                 self._delete_queue_run(run_id)
             return 1
+        if "matterloop:checkpoint-save" in script:
+            self.last_checkpoint_arguments = args
+            checkpoint_key = keys[0]
+            expected_revision, payload, run_id = int(args[0]), str(args[1]), str(args[2])
+            try:
+                replacement = json.loads(payload)
+                replacement_context = replacement["context"]
+                replacement_run_id = replacement_context["run_id"]
+                replacement_revision = replacement_context["revision"]
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return -2
+            if replacement_run_id != run_id or replacement_revision != expected_revision + 1:
+                return -2
+
+            current = self.strings.get(checkpoint_key)
+            if current is None:
+                if expected_revision != 0:
+                    return 0
+                self.strings[checkpoint_key] = payload
+                return 1
+            try:
+                current_payload = current.decode("utf-8") if isinstance(current, bytes) else current
+                decoded = json.loads(str(current_payload))
+                current_context = decoded["context"]
+                current_run_id = current_context["run_id"]
+                current_revision = current_context["revision"]
+            except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                return -2
+            if current_run_id != run_id or not isinstance(current_revision, int):
+                return -2
+            if current_revision != expected_revision:
+                return 0
+            self.strings[checkpoint_key] = payload
+            return expected_revision + 1
         if "matterloop:repository-create" in script:
             record_key, index_key = keys
             if record_key in self.strings:
@@ -246,10 +285,13 @@ def test_adapters_keep_explicit_client_identity() -> None:
     queue = RedisQueueBackend(client)
     repository = RedisRunRepository(client)
     events = RedisEventPublisher(client)
+    checkpoints = RedisCheckpointStore(client)
 
+    assert isinstance(client, AsyncRedisClient)
     assert queue._client is client
     assert repository._client is client
     assert events._client is client
+    assert checkpoints._client is client
 
 
 def test_payload_codec_round_trips_jobs_and_results() -> None:
@@ -289,6 +331,131 @@ def test_checkpoint_serialization_errors_stay_inside_redis_error_boundary() -> N
         context = LoopContext(request, run_id="run-invalid")
         with pytest.raises(RedisPayloadError, match="serializable"):
             await publisher.publish(LoopEvent(LoopEventType.LOOP_STARTED, context))
+
+    asyncio.run(scenario())
+
+
+def test_checkpoint_store_recovers_from_a_new_adapter_instance() -> None:
+    """新建适配器实例应能从同一 Redis 恢复完整 Loop 检查点。"""
+
+    async def scenario() -> None:
+        client = FakeRedis()
+        first_store = RedisCheckpointStore(client, RedisConfig(prefix="matterloop:{test}"))
+        context = LoopContext(LoopRequest("跨实例恢复"), run_id="run-checkpoint")
+
+        first_revision = await first_store.save(context)
+        assert first_revision == 1
+        assert context.revision == 0
+        assert client.last_checkpoint_arguments is not None
+        assert all(isinstance(argument, str) for argument in client.last_checkpoint_arguments)
+        context.revision = first_revision
+        context.status = LoopStatus.PLANNING
+        context.cycle_count = 1
+        context.feedback = "已生成恢复上下文"
+        second_revision = await first_store.save(context)
+        assert second_revision == 2
+
+        restarted_store = RedisCheckpointStore(
+            client,
+            RedisConfig(prefix="matterloop:{test}"),
+        )
+        restored = await restarted_store.load(context.run_id)
+
+        assert restored is not None
+        assert restored.run_id == context.run_id
+        assert restored.request == context.request
+        assert restored.status is LoopStatus.PLANNING
+        assert restored.cycle_count == 1
+        assert restored.feedback == "已生成恢复上下文"
+        assert restored.revision == second_revision
+
+        key = "matterloop:{test}:checkpoints:run-checkpoint"
+        stored = client.strings[key]
+        assert isinstance(stored, str)
+        client.strings[key] = stored.encode("utf-8")
+        restored_from_bytes = await restarted_store.load(context.run_id)
+        assert restored_from_bytes is not None
+        assert restored_from_bytes.revision == second_revision
+
+    asyncio.run(scenario())
+
+
+def test_checkpoint_store_rejects_corrupted_redis_data() -> None:
+    """损坏文本、非法 UTF-8 和错误类型都不得被当作可恢复检查点。"""
+
+    async def scenario() -> None:
+        client = FakeRedis()
+        store = RedisCheckpointStore(client)
+        key = "matterloop:checkpoints:run-corrupted"
+
+        client.strings[key] = "{not-json"
+        with pytest.raises(RedisPayloadError, match="invalid"):
+            await store.load("run-corrupted")
+
+        client.strings[key] = b"\xff"
+        with pytest.raises(RedisPayloadError, match="UTF-8"):
+            await store.load("run-corrupted")
+
+        client.strings[key] = 42
+        with pytest.raises(RedisPayloadError, match="text or bytes"):
+            await store.load("run-corrupted")
+
+        client.strings[key] = "{still-not-json"
+        context = LoopContext(LoopRequest("拒绝覆盖损坏数据"), run_id="run-corrupted")
+        with pytest.raises(RedisPayloadError, match="corrupted"):
+            await store.save(context)
+
+    asyncio.run(scenario())
+
+
+def test_checkpoint_store_validates_run_id_and_expected_revision() -> None:
+    """Key 标识与 CAS revision 必须在访问 Redis 前通过边界校验。"""
+
+    async def scenario() -> None:
+        store = RedisCheckpointStore(FakeRedis())
+
+        with pytest.raises(ValueError, match="run_id"):
+            await store.save(LoopContext(LoopRequest("空标识"), run_id=" "))
+        with pytest.raises(ValueError, match="expected_revision"):
+            await store.save(
+                LoopContext(LoopRequest("非法版本"), run_id="run-invalid-revision"),
+                expected_revision=True,
+            )
+        with pytest.raises(ValueError, match="run_id"):
+            await store.load(" ")
+
+    asyncio.run(scenario())
+
+
+def test_checkpoint_store_rejects_stale_revision_without_overwriting_winner() -> None:
+    """两个实例同时更新时，陈旧 revision 必须冲突且不能覆盖胜者。"""
+
+    async def scenario() -> None:
+        client = FakeRedis()
+        first_store = RedisCheckpointStore(client)
+        second_store = RedisCheckpointStore(client)
+        initial = LoopContext(LoopRequest("检查点 CAS"), run_id="run-conflict")
+        initial.revision = await first_store.save(initial)
+
+        first_copy = await first_store.load(initial.run_id)
+        stale_copy = await second_store.load(initial.run_id)
+        assert first_copy is not None and stale_copy is not None
+        first_copy.feedback = "winner"
+        winning_revision = await first_store.save(first_copy)
+        assert winning_revision == 2
+
+        stale_copy.feedback = "stale"
+        with pytest.raises(CheckpointConflictError, match="expected 1"):
+            await second_store.save(stale_copy)
+
+        restored = await second_store.load(initial.run_id)
+        assert restored is not None
+        assert restored.feedback == "winner"
+        assert restored.revision == winning_revision
+
+        missing = LoopContext(LoopRequest("不存在"), run_id="missing", revision=3)
+        with pytest.raises(CheckpointConflictError, match="expected 3"):
+            await second_store.save(missing)
 
     asyncio.run(scenario())
 
@@ -471,3 +638,4 @@ def test_adapters_satisfy_runtime_protocols() -> None:
     assert isinstance(RedisQueueBackend(client), QueueBackend)
     assert isinstance(RedisRunRepository(client), RunRepository)
     assert isinstance(RedisEventPublisher(client), RunEventReader)
+    assert isinstance(RedisCheckpointStore(client), CheckpointStore)

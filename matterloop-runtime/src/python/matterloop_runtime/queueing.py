@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -13,7 +14,14 @@ from uuid import uuid4
 
 from matterloop_core import LoopRequest, LoopResult, ResumeMode
 
-from matterloop_runtime.errors import DuplicateRunError, RunNotFoundError, RunNotResumableError
+from matterloop_runtime.errors import (
+    DuplicateRunError,
+    QueueLeaseLostError,
+    RunNotFoundError,
+    RunNotResumableError,
+    RunRequestConflictError,
+    RunUpdateConflictError,
+)
 
 
 def _utc_now() -> datetime:
@@ -152,6 +160,15 @@ class QueueBackend(QueueProducer, Protocol):
 
 
 @runtime_checkable
+class RenewableQueueBackend(QueueBackend, Protocol):
+    """允许长任务在租约到期前发送心跳的拉取队列协议。"""
+
+    async def renew(self, lease: QueueLease, lease_seconds: float) -> QueueLease:
+        """续期当前租约并返回新的租约快照。"""
+        ...
+
+
+@runtime_checkable
 class RunRepository(Protocol):
     """保存运行查询状态并通过版本号提供 CAS 更新。"""
 
@@ -272,8 +289,7 @@ class InMemoryQueueBackend:
         if not worker_id:
             raise ValueError("worker_id must not be empty")
         lease_seconds = 30.0 if lease_seconds is None else lease_seconds
-        if lease_seconds <= 0:
-            raise ValueError("lease_seconds must be greater than 0")
+        _validate_finite_seconds(lease_seconds, "lease_seconds", positive=True)
         async with self._lock:
             now = _utc_now()
             self._reclaim_expired(now)
@@ -299,6 +315,7 @@ class InMemoryQueueBackend:
     async def acknowledge(self, lease: QueueLease) -> None:
         """确认租约并清理命令。"""
         async with self._lock:
+            self._reclaim_expired(_utc_now())
             current = self._leased.get(lease.lease_id)
             if current != lease:
                 return
@@ -308,9 +325,9 @@ class InMemoryQueueBackend:
 
     async def release(self, lease: QueueLease, *, delay_seconds: float = 0) -> None:
         """释放有效租约并增加尝试次数。"""
-        if delay_seconds < 0:
-            raise ValueError("delay_seconds must not be negative")
+        _validate_finite_seconds(delay_seconds, "delay_seconds", positive=False)
         async with self._lock:
+            self._reclaim_expired(_utc_now())
             current = self._leased.get(lease.lease_id)
             if current != lease:
                 return
@@ -325,6 +342,31 @@ class InMemoryQueueBackend:
                     attempt=lease.attempt + 1,
                 )
             )
+
+    async def renew(self, lease: QueueLease, lease_seconds: float) -> QueueLease:
+        """续期仍由调用方持有的租约。
+
+        Args:
+            lease: 上一次获得或续期返回的最新租约快照。
+            lease_seconds: 从当前时刻开始计算的新租约秒数。
+
+        Returns:
+            到期时间已经更新的新租约快照。旧快照立即失效。
+
+        Raises:
+            ValueError: 租约秒数不是有限正数。
+            QueueLeaseLostError: 租约已过期、已续期或已被回收。
+        """
+        _validate_finite_seconds(lease_seconds, "lease_seconds", positive=True)
+        async with self._lock:
+            now = _utc_now()
+            self._reclaim_expired(now)
+            current = self._leased.get(lease.lease_id)
+            if current != lease:
+                raise QueueLeaseLostError(lease.lease_id)
+            renewed = replace(current, expires_at=now + timedelta(seconds=lease_seconds))
+            self._leased[lease.lease_id] = renewed
+            return renewed
 
     async def cancel(self, run_id: str) -> bool:
         """标记命令取消，并移除尚未租用的同标识命令。"""
@@ -376,7 +418,13 @@ class QueueRuntime:
         """
         actual_run_id = run_id or uuid4().hex
         record = RunRecord(run_id=actual_run_id, request=request)
-        await self.repository.create(record)
+        try:
+            await self.repository.create(record)
+        except DuplicateRunError:
+            existing = await self.repository.get(actual_run_id)
+            if existing is not None and existing.request == request:
+                return actual_run_id
+            raise RunRequestConflictError(actual_run_id) from None
         try:
             await self.producer.enqueue(
                 QueuedRun(actual_run_id, QueueAction.START, request=request)
@@ -386,6 +434,7 @@ class QueueRuntime:
                 actual_run_id,
                 status=RunStatus.FAILED,
                 error=f"{type(exc).__name__}: {exc}",
+                expected_statuses={RunStatus.QUEUED},
             )
             raise
         return actual_run_id
@@ -416,8 +465,13 @@ class QueueRuntime:
             RunNotFoundError: 运行记录不存在。
             TimeoutError: 等待超过调用方给定上限。
         """
-        if poll_interval_seconds <= 0:
-            raise ValueError("poll_interval_seconds must be greater than 0")
+        _validate_finite_seconds(
+            poll_interval_seconds,
+            "poll_interval_seconds",
+            positive=True,
+        )
+        if timeout_seconds is not None:
+            _validate_finite_seconds(timeout_seconds, "timeout_seconds", positive=False)
         deadline = (
             None if timeout_seconds is None else asyncio.get_running_loop().time() + timeout_seconds
         )
@@ -440,8 +494,17 @@ class QueueRuntime:
         if not accepted:
             accepted = await self.producer.cancel(run_id)
         if accepted:
-            await self._update(run_id, status=RunStatus.CANCELLED)
-        return accepted
+            return await self._update(
+                run_id,
+                status=RunStatus.CANCELLED,
+                expected_statuses={
+                    RunStatus.QUEUED,
+                    RunStatus.RUNNING,
+                    RunStatus.PAUSED,
+                    RunStatus.BLOCKED,
+                },
+            )
+        return False
 
     async def resume(
         self,
@@ -455,7 +518,13 @@ class QueueRuntime:
             raise RunNotFoundError(run_id)
         if record.status not in {RunStatus.PAUSED, RunStatus.BLOCKED}:
             raise RunNotResumableError(f"run is not resumable: {record.status.value}")
-        updated = await self._update(run_id, status=RunStatus.QUEUED, result=None, error="")
+        updated = await self._update(
+            run_id,
+            status=RunStatus.QUEUED,
+            result=None,
+            error="",
+            expected_statuses={RunStatus.PAUSED, RunStatus.BLOCKED},
+        )
         if not updated:
             return False
         try:
@@ -466,6 +535,7 @@ class QueueRuntime:
                 status=record.status,
                 result=record.result,
                 error=record.error,
+                expected_statuses={RunStatus.QUEUED},
             )
             raise
         return True
@@ -489,11 +559,17 @@ class QueueRuntime:
         status: RunStatus,
         result: LoopResult | None = None,
         error: str = "",
+        expected_statuses: Collection[RunStatus] | None = None,
     ) -> bool:
-        for _ in range(16):
+        max_attempts = 16
+        for _ in range(max_attempts):
             current = await self.repository.get(run_id)
             if current is None:
                 raise RunNotFoundError(run_id)
+            if current.status.is_terminal:
+                return False
+            if expected_statuses is not None and current.status not in expected_statuses:
+                return False
             replacement = replace(
                 current,
                 status=status,
@@ -505,4 +581,14 @@ class QueueRuntime:
             if await self.repository.compare_and_set(run_id, current.version, replacement):
                 return True
             await asyncio.sleep(0)
-        return False
+        raise RunUpdateConflictError(run_id, max_attempts)
+
+
+def _validate_finite_seconds(value: float, field_name: str, *, positive: bool) -> None:
+    """拒绝会破坏超时和租约边界的非有限秒数。"""
+    if not math.isfinite(value):
+        raise ValueError(f"{field_name} must be finite")
+    if positive and value <= 0:
+        raise ValueError(f"{field_name} must be greater than 0")
+    if not positive and value < 0:
+        raise ValueError(f"{field_name} must not be negative")

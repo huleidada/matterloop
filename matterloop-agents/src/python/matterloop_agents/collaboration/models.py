@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from math import isfinite
 from uuid import uuid4
 
 from matterloop_core import (
@@ -85,6 +86,7 @@ class TeamStopReason(str, Enum):
     REVIEW_STOPPED = "review_stopped"
     HUMAN_REJECTED = "human_rejected"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    RECOVERY_REQUIRED = "recovery_required"
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,8 +121,10 @@ class TeamLimits:
             raise ValueError("max_cycles must be at least 1")
         if self.max_plan_revisions < 0:
             raise ValueError("max_plan_revisions must not be negative")
-        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be greater than 0")
+        if self.timeout_seconds is not None and (
+            not isfinite(self.timeout_seconds) or self.timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be finite and greater than 0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +162,7 @@ class TaskSpec:
         dependencies: 必须先成功的任务标识。
         acceptance_criteria: 任务级验收条件。
         requires_approval: 是否必须在分配前经过审批。
+        replay_safe: 进程中断后是否允许重新调用 Agent；默认禁止以避免重复计算。
         priority: 同时就绪时的调度优先级，数值越大越优先。
         metadata: 只读任务扩展信息。
     """
@@ -170,6 +175,7 @@ class TaskSpec:
     requires_approval: bool = False
     priority: int = 0
     metadata: Mapping[str, object] = field(default_factory=dict)
+    replay_safe: bool = False
 
     def __post_init__(self) -> None:
         """规范任务标识、依赖和扩展数据。"""

@@ -138,6 +138,11 @@ side effects. A failed verification consumes task-level attempts first. Only aft
 exhausted does the controller archive the current cycle and enter the next planning cycle with the
 failure review.
 
+`TaskSpec.replay_safe` defaults to `False`. A process interruption that leaves a task `RUNNING`
+therefore enters `BLOCKED/RECOVERY_REQUIRED` for host reconciliation and does not call a replacement
+Agent. Only when the host confirms that a task is read-only and safely replayable, and explicitly
+sets `replay_safe=True`, does recovery release the old assignment and start the next attempt.
+
 `TeamLimits` independently caps tasks per plan, concurrent tasks, attempts per task, team cycles,
 plan revisions, and active timeout. A pause neither resets counters or usage nor contributes to the
 active timeout.
@@ -147,7 +152,11 @@ The Directory does not own the Endpoint lifecycle. The application must wait for
 before closing old resources.
 
 `LoopAgentEndpoint` maps a team task to a child `LoopRequest` and passes dependency results, human
-feedback, and parent/child usage scopes. A pending interaction created by the child Loop is not
+feedback, and parent/child usage scopes. After merging all business metadata, it forcibly writes
+`tool_access_scope=read_only`; request, task, and Endpoint metadata cannot elevate it.
+`ToolCallingWorker` passes this scope to `ToolRegistry`, so a child Agent can invoke only tools
+explicitly labeled `READ`. `COMPUTE`, `WRITE`, and `UNKNOWN` remain under main-Loop governance in the
+default `FULL` scope. A pending interaction created by the child Loop is not
 automatically promoted to the team layer. When that behavior is required, implement a dedicated
 Endpoint that bridges the two HITL levels.
 
@@ -196,7 +205,7 @@ occurred.
 - `TeamRequest(goal, acceptance_criteria, limits, metadata)`.
 - `TeamLimits(max_tasks, max_concurrency, max_task_attempts, max_cycles, max_plan_revisions, timeout_seconds)`: defaults to 50, 4, 3, 3, 2, and no timeout.
 - `AgentSpec(agent_id, capabilities, max_concurrency, version, description, role, metadata)`.
-- `TaskSpec(task_id, description, capability, dependencies, acceptance_criteria, requires_approval, priority, metadata)`.
+- `TaskSpec(task_id, description, capability, dependencies, acceptance_criteria, requires_approval, priority, metadata, replay_safe)`; `replay_safe` defaults to `False`, and only explicitly replay-safe pure computations are automatically invoked again after a crash.
 - `AgentTaskContext(team_run_id, request, task, agent_id, attempt, dependency_results, previous_error, human_feedback)`.
 - `TaskResult(task_id, agent_id, success, output, artifacts, error, attempt, metadata)`.
 - `TaskVerification(passed, feedback, score, evidence, failed_criteria)`.
@@ -213,11 +222,14 @@ occurred.
 
 `TeamReviewAction` is `ACCEPT/REPLAN/REQUEST_HUMAN/STOP`. Team stop reasons distinguish completion,
 approval/human rejection, task failure, no available Agent, capacity, deadlock, cancellation, timeout,
-cycle/revision limits, budget exhaustion, and component errors.
+cycle/revision limits, budget exhaustion, recovery reconciliation, and component errors.
 
 </details>
 
 ## Production boundaries
+
+- Child Agents propose work and read evidence only. Computation, tool writes, and business writes
+  return to the main Loop's approval, budget, and audit path.
 
 - Endpoints, tools, and business writes must use team run/task/attempt as idempotency keys.
 - `ResourceLimitExceededError` maps to `BLOCKED/BUDGET_EXHAUSTED`; it is not retried as an ordinary task error.

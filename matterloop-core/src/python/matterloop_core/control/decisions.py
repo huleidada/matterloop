@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from math import isfinite
 
 from matterloop_core.context.human import HumanInteractionRequest
 
@@ -31,8 +32,8 @@ class RetryDecision:
 
     def __post_init__(self) -> None:
         """禁止负数等待时间进入异步调度器。"""
-        if self.delay_seconds < 0:
-            raise ValueError("delay_seconds must not be negative")
+        if not isfinite(self.delay_seconds) or self.delay_seconds < 0:
+            raise ValueError("delay_seconds must be finite and not negative")
 
 
 class CompletionAction(str, Enum):

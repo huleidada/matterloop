@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matterloop-models"
-version = "0.1.0"
+version = "0.1.1"
 description = "Provider-neutral model APIs and provider adapters for MatterLoop"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -8,7 +8,13 @@ from types import SimpleNamespace
 
 import matterloop_tools.mcp.tool_adapter as mcp_tool_adapter_module
 import pytest
-from matterloop_tools import ToolContext, ToolRegistry
+from matterloop_tools import (
+    ToolAccessScope,
+    ToolContext,
+    ToolEffect,
+    ToolPermissionDeniedError,
+    ToolRegistry,
+)
 from matterloop_tools.mcp import (
     McpCallResult,
     McpCapabilityNotSupportedError,
@@ -248,6 +254,13 @@ async def test_mcp_discovers_and_operates_tools_resources_and_prompts() -> None:
     prompt = await registry.get_prompt("knowledge", "summarize", {"topic": "MCP"})
     adapters = await registry.discover_tools("knowledge")
     tool_registry = ToolRegistry(adapters)
+    assert adapters[0].spec.default_effect is ToolEffect.UNKNOWN
+    with pytest.raises(ToolPermissionDeniedError):
+        await tool_registry.invoke(
+            "mcp__knowledge__echo_text",
+            {"text": "hello"},
+            context=ToolContext("child", access_scope=ToolAccessScope.READ_ONLY),
+        )
     result = await tool_registry.invoke(
         "mcp__knowledge__echo_text",
         {"text": "hello"},

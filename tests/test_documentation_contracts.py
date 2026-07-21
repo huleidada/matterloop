@@ -307,6 +307,11 @@ SIGNATURE_CONTRACTS: dict[str, tuple[tuple[str, str, tuple[str, ...]], ...]] = {
         ("matterloop_integration_celery", "register_tasks", ("celery_app", "runtime_factory_path")),
     ),
     "matterloop-integration-redis/README.md": (
+        (
+            "matterloop_integration_redis",
+            "RedisCheckpointStore",
+            ("client", "config", "codec"),
+        ),
         ("matterloop_integration_redis", "RedisQueueBackend", ("client", "config", "codec")),
         ("matterloop_integration_redis", "RedisRunRepository", ("client", "config", "codec")),
         (

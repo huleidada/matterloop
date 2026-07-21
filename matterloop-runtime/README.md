@@ -54,6 +54,10 @@ record = await runtime.wait(run_id, timeout_seconds=30)
 查询，不执行任务。Worker 必须另行消费命令、调用 `AsyncRuntime`、通过仓储 CAS 提交结果，再 ack
 或 release 消息。
 
+显式传入 `run_id` 时，`submit()` 把它作为幂等键：相同 `run_id` 与相同 `LoopRequest` 重复提交会
+直接返回已有标识，不会再次入队；同一标识绑定不同请求会抛 `RunRequestConflictError`。这项保证依赖
+`RunRepository.create()` 的原子唯一约束，不能用“先查再写”替代。
+
 ## 人工反馈
 
 Runtime 只转发 Core 语义：
@@ -72,11 +76,18 @@ result = await runtime.resume(run_id)  # 默认精确继续
 
 - `QueueProducer` 只有 `enqueue/cancel`，适合 Celery 等推送系统。
 - `QueueBackend` 还提供 `lease/acknowledge/release`，适合主动拉取 Worker。
+- `RenewableQueueBackend` 额外提供 `renew(lease, lease_seconds)`，长任务应在到期前续租，并用返回的
+  新 `QueueLease` 替换旧快照；旧快照和已过期租约不能再 ack、release 或 renew。
 - `RunRepository` 提供 `create/get/list/compare_and_set`。
 - `RunEventReader` 用排他游标分页读取事件。
 
 `InMemoryQueueBackend` 与 `InMemoryRunRepository` 只适合测试和单进程开发。过期租约在下一次
-`lease()` 时回收，没有 heartbeat、死信队列或跨进程通知。
+队列操作时回收；它实现续租能力，但没有自动 heartbeat、死信队列或跨进程通知。生产 Worker 应按
+租约时长主动调用 `renew()`；续租失败必须停止提交副作用和终态。
+
+`wait(timeout_seconds, poll_interval_seconds)`、`lease(lease_seconds)`、`renew(lease_seconds)` 和
+`release(delay_seconds)` 都拒绝 NaN 与正负无穷。等待超时允许传 `0` 做一次即时检查；轮询间隔和
+租约时长必须大于 `0`，释放延迟必须大于等于 `0`。
 
 <details>
 <summary>队列数据结构速查</summary>
@@ -93,6 +104,10 @@ result = await runtime.resume(run_id)  # 默认精确继续
 
 `wait()` 在 PAUSED/BLOCKED 也会返回，因为它们是 settled 状态；只有 completed/failed/cancelled/
 timed_out 是终态。
+
+`QueueRuntime` 的状态写入使用 version CAS，并只接受调用动作声明的前置状态。并发 Worker 已经写入
+终态时，取消、恢复和故障回滚都不会覆盖该终态；连续 16 次 CAS 竞争失败会抛
+`RunUpdateConflictError`，宿主应重新读取记录后决定是否重试。
 
 </details>
 
@@ -144,7 +159,9 @@ result = await sandbox.run(
 ## 失败与关闭
 
 关闭后的门面抛 `RuntimeClosedError`；重复 run ID 抛 `DuplicateRunError`；恢复不存在或不可恢复
-运行分别抛 `RunNotFoundError`、`RunNotResumableError`；cwd 逃逸抛 `SandboxPathError`。
+运行分别抛 `RunNotFoundError`、`RunNotResumableError`；同一 run ID 对应不同请求抛
+`RunRequestConflictError`；CAS 持续冲突抛 `RunUpdateConflictError`；续租已失效租约抛
+`QueueLeaseLostError`；cwd 逃逸抛 `SandboxPathError`。
 
 Runtime 不读取环境变量，也不创建 Redis、Celery、数据库或模型客户端。推荐关闭顺序是：停止新
 请求，停止投递，排空或取消 Worker，释放租约，关闭 Runtime，最后关闭宿主持有的连接池。更多

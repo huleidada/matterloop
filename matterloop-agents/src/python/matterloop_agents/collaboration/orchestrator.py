@@ -245,7 +245,7 @@ class TeamOrchestrator:
         try:
             if snapshot.tasks:
                 graph = TaskGraph.from_snapshot(snapshot)
-                graph.recover_inflight()
+                recovery_blocked = graph.recover_inflight()
                 snapshot = await self._save(
                     snapshot,
                     graph,
@@ -254,6 +254,16 @@ class TeamOrchestrator:
                     error="",
                     cycle=max(snapshot.cycle, 1),
                 )
+                if recovery_blocked:
+                    await self._publish(TeamEventType.TEAM_RESUMED, snapshot)
+                    snapshot = await self._block(
+                        snapshot,
+                        graph,
+                        TeamStopReason.RECOVERY_REQUIRED,
+                        "interrupted tasks require host reconciliation: "
+                        + ", ".join(recovery_blocked),
+                    )
+                    return self._result(snapshot)
                 operation = self._execute(snapshot, graph)
             else:
                 snapshot = await self._save(

@@ -7,10 +7,28 @@ version entry covers the complete component set instead of maintaining separate 
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-21
+
 ### Added
 
 - Added complete English mirrors, bidirectional language switches, and internationalization contract tests for all
   public Markdown documentation.
+- Added supervised Core heartbeats, prompt cancellation, crash recovery, and persistent Redis checkpoints.
+- Added queue lease renewal, idempotent run submission, and terminal-state CAS protection.
+
+### Changed
+
+- Completed the FastAPI `httpx2` and MCP test dependencies, aligned development extras and internal lower bounds across all 12
+  distributions, and strengthened lock-file gates.
+- Execution results are checkpointed before verification; ambiguous in-flight work now blocks for reconciliation
+  instead of being replayed automatically.
+
+### Security
+
+- Child Agents are forced into a read-only tool scope; Shell, file writes, non-GET HTTP, and unknown MCP capabilities
+  remain under main-Loop governance.
+- Tool effects are enforced by the Registry before authorization, and business metadata cannot elevate a child Agent
+  to full access.
 
 ## [0.1.0] - 2026-07-16
 
@@ -34,5 +52,6 @@ version entry covers the complete component set instead of maintaining separate 
 - Shell tools execute argv directly, while filesystem and HTTP tools enforce path, protocol, host, and response-size
   boundaries.
 
-[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/huleidada/matterloop/releases/tag/v0.1.1
 [0.1.0]: https://github.com/huleidada/matterloop/releases/tag/v0.1.0

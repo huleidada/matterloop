@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matterloop-memory"
-version = "0.1.0"
+version = "0.1.1"
 description = "MatterLoop 记忆协议与内存实现"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,13 +25,16 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
-dependencies = ["matterloop-core>=0.1.0,<0.2.0"]
+dependencies = ["matterloop-core>=0.1.1,<0.2.0"]
 
 [project.urls]
 Homepage = "https://github.com/huleidada/matterloop"
 Documentation = "https://github.com/huleidada/matterloop/tree/main/docs"
 Repository = "https://github.com/huleidada/matterloop"
 Issues = "https://github.com/huleidada/matterloop/issues"
+
+[project.optional-dependencies]
+dev = ["mypy>=1.10", "pytest>=8.0", "ruff>=0.5"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/python/matterloop_memory"]

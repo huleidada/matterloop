@@ -7,9 +7,23 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-21
+
 ### Added
 
 - 全部公开 Markdown 新增英文镜像、双向语言切换和国际化契约测试。
+- Core 长调用心跳、即时取消、崩溃恢复入口和 Redis 持久检查点。
+- 队列租约续期、运行提交幂等和 CAS 终态保护。
+
+### Changed
+
+- 补齐 FastAPI `httpx2` 与 MCP 测试依赖，统一 12 个发行包的开发依赖与内部版本下限，并更新锁文件门禁。
+- 执行结果在验证前写入检查点；状态不明确的执行默认进入对账阻塞，不再自动重放。
+
+### Security
+
+- 子 Agent 强制使用只读工具范围；Shell、写文件、非 GET HTTP 和未知 MCP 能力由主 Loop 统一治理。
+- 工具副作用分类在注册中心授权前强制检查，业务 metadata 不能把子 Agent 提权为完整访问。
 
 ## [0.1.0] - 2026-07-16
 
@@ -30,5 +44,6 @@
 - 模型 continuation/reasoning 不进入公开结果，日志与事件支持敏感字段脱敏。
 - Shell 工具使用 argv 调用，文件与 HTTP 工具提供路径、协议、host 和响应大小边界。
 
-[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/huleidada/matterloop/releases/tag/v0.1.1
 [0.1.0]: https://github.com/huleidada/matterloop/releases/tag/v0.1.0

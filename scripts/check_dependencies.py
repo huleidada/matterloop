@@ -10,6 +10,7 @@ from typing import cast
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -217,6 +218,34 @@ def _requirements(pyproject: Mapping[str, object]) -> tuple[Requirement, ...]:
     return tuple(requirements)
 
 
+def _internal_version_bounds(
+    project: Mapping[str, object],
+    distribution: str,
+    violations: list[str],
+) -> tuple[Version, Version] | None:
+    """读取发行版本并计算内部依赖允许的半开区间。"""
+    raw_version = project.get("version")
+    if not isinstance(raw_version, str):
+        violations.append(f"{distribution}: project.version 必须是字符串")
+        return None
+    try:
+        version = Version(raw_version)
+    except InvalidVersion:
+        violations.append(f"{distribution}: project.version 不是有效版本：{raw_version!r}")
+        return None
+    if (
+        len(version.release) != 3
+        or version.is_prerelease
+        or version.is_devrelease
+        or version.is_postrelease
+        or version.local is not None
+    ):
+        violations.append(f"{distribution}: project.version 必须使用稳定的 X.Y.Z 格式")
+        return None
+    upper_bound = Version(f"{version.major}.{version.minor + 1}.0")
+    return version, upper_bound
+
+
 def _validate_workspace(repository: Path, violations: list[str]) -> None:
     """保证新增或删除发行包时必须同步架构清单。"""
     discovered = {path.parent.name for path in repository.glob("matterloop-*/pyproject.toml")}
@@ -255,8 +284,7 @@ def _validate_package(
     project = _mapping(pyproject.get("project"))
     if project.get("name") != distribution:
         violations.append(f"{distribution}: project.name 必须与目录名一致")
-    if not str(project.get("version", "")).startswith("0.1."):
-        violations.append(f"{distribution}: 版本必须保持在 0.1.x")
+    version_bounds = _internal_version_bounds(project, distribution, violations)
     wheel = _mapping(_mapping(_mapping(pyproject.get("tool")).get("hatch")).get("build"))
     targets = _mapping(wheel.get("targets"))
     configured_packages = _strings(_mapping(targets.get("wheel")).get("packages"))
@@ -306,13 +334,18 @@ def _validate_package(
 
     for requirement in requirements:
         normalized_name = canonicalize_name(requirement.name)
-        if normalized_name not in internal_names:
+        if normalized_name not in internal_names or version_bounds is None:
             continue
+        release_version, upper_bound = version_bounds
+        expected_specifiers = {f">={release_version}", f"<{upper_bound}"}
         specifiers = {str(specifier) for specifier in requirement.specifier}
-        if specifiers != {">=0.1.0", "<0.2.0"} or requirement.marker is not None:
-            violations.append(
-                f"{distribution}: 内部依赖 {requirement.name} 必须使用 >=0.1.0,<0.2.0"
-            )
+        if (
+            specifiers != expected_specifiers
+            or requirement.marker is not None
+            or requirement.url is not None
+        ):
+            expected = f">={release_version},<{upper_bound}"
+            violations.append(f"{distribution}: 内部依赖 {requirement.name} 必须使用 {expected}")
 
     for imported_root, required_distribution in EXTERNAL_IMPORT_DISTRIBUTIONS.items():
         if (

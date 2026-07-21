@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from matterloop_core import LoopLimits, LoopRequest, LoopResult, LoopStatus
+from matterloop_tools import ToolAccessScope
 
 from matterloop_agents.collaboration._immutability import freeze_mapping
 from matterloop_agents.collaboration.models import (
@@ -89,6 +90,8 @@ class LoopAgentEndpoint:
                 ),
                 "usage_scopes": usage_scopes,
                 "dependency_outputs": tuple(result.output for result in context.dependency_results),
+                # 团队任务元数据不可信；该保留字段必须最后写入，调用方不能提升子 Agent 权限。
+                "tool_access_scope": ToolAccessScope.READ_ONLY.value,
             },
         )
         loop_run_id = (

@@ -45,6 +45,43 @@ class DuplicateRunError(RuntimeErrorBase):
         super().__init__(f"run already exists: {run_id}")
 
 
+class RunRequestConflictError(DuplicateRunError):
+    """同一运行标识已绑定到不同请求。"""
+
+    def __init__(self, run_id: str) -> None:
+        """初始化异常。
+
+        Args:
+            run_id: 已被其他请求占用的运行标识。
+        """
+        RuntimeErrorBase.__init__(self, f"run id is already bound to another request: {run_id}")
+
+
+class RunUpdateConflictError(RuntimeErrorBase):
+    """运行记录在限定次数内持续发生 CAS 冲突。"""
+
+    def __init__(self, run_id: str, attempts: int) -> None:
+        """初始化异常。
+
+        Args:
+            run_id: 更新失败的运行标识。
+            attempts: 已执行的 CAS 尝试次数。
+        """
+        super().__init__(f"run update conflict after {attempts} attempts: {run_id}")
+
+
+class QueueLeaseLostError(RuntimeErrorBase):
+    """队列租约已过期、已续期或不再由当前工作进程持有。"""
+
+    def __init__(self, lease_id: str) -> None:
+        """初始化异常。
+
+        Args:
+            lease_id: 已失效的租约标识。
+        """
+        super().__init__(f"queue lease is no longer current: {lease_id}")
+
+
 class RunNotFoundError(RuntimeErrorBase):
     """指定运行记录不存在。"""
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matterloop-runtime"
-version = "0.1.0"
+version = "0.1.1"
 description = "Runtime, queue, sandbox, and lifecycle components for MatterLoop"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,7 +25,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
-dependencies = ["matterloop-core>=0.1.0,<0.2.0"]
+dependencies = ["matterloop-core>=0.1.1,<0.2.0"]
 
 [project.urls]
 Homepage = "https://github.com/huleidada/matterloop"

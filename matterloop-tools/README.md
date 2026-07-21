@@ -17,6 +17,7 @@ pip install "matterloop-tools[mcp]"
 Agent
   └─ ToolRegistry.invoke(name, arguments, context)
        ├─ 固定本次调用使用的工具实例
+       ├─ 强制 ToolAccessScope 与 ToolEffect 边界
        ├─ ToolAuthorizer.authorize(...)
        └─ Tool.invoke(...)
             ├─ FileSystemTool / ShellTool / HttpTool
@@ -44,7 +45,9 @@ tools = ToolRegistry(
 ```
 
 `ToolRegistry(tools, authorizer)` 在没有 authorizer 时使用 `AllowAllToolAuthorizer`。这方便测试，但
-不适合作为生产默认。授权器应根据可信身份、租户、工具名、参数与 `ToolContext` 作出决定。
+不适合作为生产默认。无论是否配置授权器，`READ_ONLY` 上下文都会在授权器之前拒绝
+`COMPUTE/WRITE/UNKNOWN`；授权器不能绕过这条强制边界。授权器仍应根据可信身份、租户、工具名、
+参数与 `ToolContext` 作出更细粒度的决定。
 
 ## 工具协议与生命周期
 
@@ -60,10 +63,28 @@ class Tool(Protocol):
     ) -> ToolResult: ...
 ```
 
-- `ToolSpec(name, description, input_schema)` 描述模型可见的调用接口。
-- `ToolContext(run_id, step_id, metadata)` 携带授权与关联信息；metadata 只接受 JSON-compatible 值，
-  并在调用前递归快照。
+- `ToolSpec` 描述模型可见接口以及注册表必须执行的副作用分类。
+- `ToolContext` 携带授权、关联信息和不可由业务授权器提升的访问范围；metadata 只接受
+  JSON-compatible 值，并在调用前递归快照。
 - `ToolResult(content, is_error, metadata)` 返回文本结果和安全诊断。
+
+| DTO | 字段 | 类型 | 必填 / 默认值 | 行为与安全约束 |
+| --- | --- | --- | --- | --- |
+| `ToolSpec` | `name` | `str` | 必填 | 注册名称，不能为空。 |
+| `ToolSpec` | `description` | `str` | 必填 | 模型可见说明，不能为空。 |
+| `ToolSpec` | `input_schema` | `Mapping[str, object]` | 必填 | JSON Schema 快照；工具仍须在本地校验参数。 |
+| `ToolSpec` | `default_effect` | `ToolEffect` | `UNKNOWN` | 参数缺失、类型错误或映射未命中时的保守副作用。 |
+| `ToolSpec` | `effect_argument` | `str \| None` | `None` | 用于选择副作用的参数，例如 `operation` 或 `method`。 |
+| `ToolSpec` | `effect_mapping` | `Mapping[str, ToolEffect]` | 空映射 | 参数值大小写不敏感；构造时冻结，适合生成目录文档。 |
+| `ToolSpec` | `effect_argument_default` | `str \| None` | `None` | 调用省略选择参数时采用的工具默认值，例如 HTTP 的 `GET`。 |
+| `ToolContext` | `run_id` | `str` | 必填 | Loop 关联标识，不能为空。 |
+| `ToolContext` | `step_id` | `str \| None` | `None` | 可选计划步骤标识。 |
+| `ToolContext` | `metadata` | `Mapping[str, object]` | 空映射 | 递归快照；不得作为绕过 `access_scope` 的权限来源。 |
+| `ToolContext` | `access_scope` | `ToolAccessScope` | `FULL` | 主 Loop 默认完整治理；子 Agent 使用 `READ_ONLY`。 |
+
+`ToolEffect` 包含 `READ/COMPUTE/WRITE/UNKNOWN`，`ToolAccessScope` 包含 `FULL/READ_ONLY`。自定义工具
+若不显式声明 effect，会以 `UNKNOWN` 处理并被只读上下文拒绝。`effect_for(arguments)` 可用于目录、
+审计和测试，但最终判定始终由 `ToolRegistry.invoke()` 执行。
 
 Schema 用于发现，不代表注册表会自动执行 JSON Schema。自定义工具必须在本地校验全部参数；模型
 侧的 strict tools 也不能替代授权。
@@ -214,6 +235,9 @@ skill_tool = SkillTool(adapter=adapter, name="skill_reference")
 `read/list/exists/stat/write`。路径会做词法、resolve 和逐级符号链接检查；写入使用同目录临时文件
 与原子替换。
 
+注册表把 `read/list/exists/stat` 标记为 `READ`，把 `write` 标记为 `WRITE`。即使工具实例开启了
+`allow_write=True`，只读子 Agent 仍无法调用写操作。
+
 它不能消除同机恶意进程的 TOCTOU、硬链接或挂载变化，也不支持二进制、删除、移动、mkdir 和
 glob。高对抗场景应使用隔离文件服务。
 
@@ -222,6 +246,8 @@ glob。高对抗场景应使用隔离文件服务。
 `ShellTool(workspace, allowed_commands, sandbox, base_environment, allowed_environment, max_timeout_seconds, max_output_bytes)` 只接受 argv，不使用 `shell=True`。命令必须是白名单中的裸程序名；默认环境为空，
 stdout/stderr 共享输出预算。
 
+所有 Shell 调用都标记为 `COMPUTE`，因此只读子 Agent 会在沙箱启动前被拒绝。
+
 程序名白名单不等于参数安全：`python -c`、测试插件、编译器和包管理器仍可能执行任意代码。
 `LocalProcessSandbox` 也只限制 cwd、环境、超时和输出，不是恶意代码隔离。
 
@@ -229,6 +255,9 @@ stdout/stderr 共享输出预算。
 
 `HttpTool(allowed_hosts, allowed_methods, require_https, follow_redirects, max_redirects, max_timeout_seconds, max_response_bytes, max_request_bytes, allowed_headers, transport)` 默认只允许 HTTPS `GET` 和精确 host allowlist，
 不继承系统代理；重定向开启后逐跳复核 URL。
+
+省略 `method` 或显式 `GET` 时标记为 `READ`，其他方法标记为 `WRITE`。MCP 远端工具默认
+`UNKNOWN`，必须由主 Loop 治理；`SkillTool` 的 `list/get` 明确标记为 `READ`。
 
 host 校验不固定 DNS 解析结果，也不阻止 rebinding、私网解析或允许主机上的任意端口。强 SSRF
 边界需要在 transport 或网络层继续限制 CIDR、端口、出口与 TLS 身份。
