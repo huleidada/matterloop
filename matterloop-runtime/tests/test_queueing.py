@@ -135,6 +135,27 @@ async def test_expired_lease_cannot_acknowledge_or_release_reclaimed_job() -> No
     assert recovered.attempt == 2
 
 
+async def test_cancelled_expired_lease_allows_run_id_reuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """已取消租约回收完成后，相同运行标识应能安全用于新任务。"""
+    now = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+    monkeypatch.setattr(queueing_module, "_utc_now", lambda: now[0])
+    backend = InMemoryQueueBackend()
+    await backend.enqueue(QueuedRun("reused-run", QueueAction.START, request=LoopRequest("first")))
+    cancelled = await backend.lease("worker", 30)
+    assert cancelled is not None
+    assert await backend.cancel("reused-run")
+
+    now[0] += timedelta(seconds=31)
+    assert await backend.lease("worker") is None
+    await backend.enqueue(QueuedRun("reused-run", QueueAction.START, request=LoopRequest("second")))
+
+    reused = await backend.lease("worker")
+    assert reused is not None
+    assert reused.job.request == LoopRequest("second")
+
+
 async def test_repository_compare_and_set_rejects_stale_version() -> None:
     repository = InMemoryRunRepository()
     original = RunRecord("run-1", LoopRequest("goal"))
