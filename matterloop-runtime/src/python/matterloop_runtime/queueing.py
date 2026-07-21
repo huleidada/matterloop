@@ -389,6 +389,7 @@ class InMemoryQueueBackend:
             del self._leased[lease.lease_id]
             if lease.job.run_id in self._cancelled_runs:
                 self._known_runs.discard(lease.job.run_id)
+                self._cancelled_runs.discard(lease.job.run_id)
             else:
                 self._push_pending(lease.job, now, attempt=lease.attempt + 1)
 
