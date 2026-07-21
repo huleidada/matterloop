@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import deque
+from collections.abc import Iterable
 from dataclasses import replace
 
 from matterloop_agents.collaboration.errors import (
@@ -38,7 +40,7 @@ class TaskGraph:
         *,
         states: tuple[TaskState, ...] | None = None,
     ) -> None:
-        self._validate(tasks)
+        self._dependents = self._validate_and_index(tasks)
         self._tasks = {task.task_id: task for task in tasks}
         if states is None:
             self._states = {
@@ -56,7 +58,7 @@ class TaskGraph:
                 raise InvalidTaskGraphError("restored task definitions do not match the graph")
             self._states = state_by_id
             self._validate_restored_dependencies()
-            self._refresh_pending()
+            self._refresh_pending(self._states)
 
     @classmethod
     def from_snapshot(cls, snapshot: TeamSnapshot) -> TaskGraph:
@@ -96,7 +98,6 @@ class TaskGraph:
 
     def ready_tasks(self) -> tuple[TaskSpec, ...]:
         """按优先级和标识返回当前可以分配的任务。"""
-        self._refresh_pending()
         ready = [state.spec for state in self._states.values() if state.status is TaskStatus.READY]
         return tuple(sorted(ready, key=lambda task: (-task.priority, task.task_id)))
 
@@ -183,7 +184,7 @@ class TaskGraph:
             error="",
         )
         self._states[task_id] = updated
-        self._refresh_pending()
+        self._refresh_pending(self._dependents[task_id])
         return updated
 
     def retry(
@@ -228,7 +229,7 @@ class TaskGraph:
             error=error,
         )
         self._states[task_id] = updated
-        self._refresh_pending()
+        self._refresh_pending(self._dependents[task_id])
         return updated
 
     def cancel_all(self) -> None:
@@ -236,7 +237,6 @@ class TaskGraph:
         for task_id, state in tuple(self._states.items()):
             if not state.status.is_terminal:
                 self._states[task_id] = replace(state, status=TaskStatus.CANCELLED)
-        self._refresh_pending()
 
     def recover_inflight(self) -> tuple[str, ...]:
         """恢复中断节点，并返回因副作用不明确而被阻塞的任务标识。
@@ -262,7 +262,9 @@ class TaskGraph:
                     error="recovery requires host reconciliation; task was not replayed",
                 )
                 blocked.append(task_id)
-        self._refresh_pending()
+        self._refresh_pending(
+            dependent for task_id in blocked for dependent in self._dependents[task_id]
+        )
         return tuple(sorted(blocked))
 
     def _validate_restored_dependencies(self) -> None:
@@ -343,29 +345,35 @@ class TaskGraph:
             )
         return state
 
-    def _refresh_pending(self) -> None:
-        changed = True
-        while changed:
-            changed = False
-            for task_id, state in tuple(self._states.items()):
-                if state.status is not TaskStatus.PENDING:
-                    continue
-                dependency_statuses = {
-                    self._states[dependency].status for dependency in state.spec.dependencies
-                }
-                if dependency_statuses & _FAILED_DEPENDENCIES:
-                    self._states[task_id] = replace(
-                        state,
-                        status=TaskStatus.BLOCKED,
-                        error="dependency did not complete successfully",
-                    )
-                    changed = True
-                elif all(status is TaskStatus.SUCCEEDED for status in dependency_statuses):
-                    self._states[task_id] = replace(state, status=TaskStatus.READY)
-                    changed = True
+    def _refresh_pending(self, task_ids: Iterable[str]) -> None:
+        pending = deque(dict.fromkeys(task_ids))
+        queued = set(pending)
+        while pending:
+            task_id = pending.popleft()
+            queued.discard(task_id)
+            state = self._states[task_id]
+            if state.status is not TaskStatus.PENDING:
+                continue
+            dependency_statuses = {
+                self._states[dependency].status for dependency in state.spec.dependencies
+            }
+            if dependency_statuses & _FAILED_DEPENDENCIES:
+                self._states[task_id] = replace(
+                    state,
+                    status=TaskStatus.BLOCKED,
+                    error="dependency did not complete successfully",
+                )
+            elif all(status is TaskStatus.SUCCEEDED for status in dependency_statuses):
+                self._states[task_id] = replace(state, status=TaskStatus.READY)
+            else:
+                continue
+            for dependent in self._dependents[task_id]:
+                if dependent not in queued:
+                    pending.append(dependent)
+                    queued.add(dependent)
 
     @staticmethod
-    def _validate(tasks: tuple[TaskSpec, ...]) -> None:
+    def _validate_and_index(tasks: tuple[TaskSpec, ...]) -> dict[str, tuple[str, ...]]:
         if not tasks:
             raise InvalidTaskGraphError("task graph must contain at least one task")
         task_ids = [task.task_id for task in tasks]
@@ -380,20 +388,27 @@ class TaskGraph:
                     f"task {task.task_id!r} references missing dependencies: {values}"
                 )
 
-        remaining = {task.task_id: set(task.dependencies) for task in tasks}
-        ready = [task_id for task_id, dependencies in remaining.items() if not dependencies]
+        dependents: dict[str, list[str]] = {task_id: [] for task_id in task_ids}
+        remaining_dependencies = {task.task_id: len(task.dependencies) for task in tasks}
+        for task in tasks:
+            for dependency in task.dependencies:
+                dependents[dependency].append(task.task_id)
+        ready = deque(
+            task_id
+            for task_id, dependency_count in remaining_dependencies.items()
+            if dependency_count == 0
+        )
         visited = 0
         while ready:
-            current = ready.pop()
+            current = ready.popleft()
             visited += 1
-            for task_id, dependencies in remaining.items():
-                if current not in dependencies:
-                    continue
-                dependencies.remove(current)
-                if not dependencies:
-                    ready.append(task_id)
+            for dependent in dependents[current]:
+                remaining_dependencies[dependent] -= 1
+                if remaining_dependencies[dependent] == 0:
+                    ready.append(dependent)
         if visited != len(tasks):
             raise InvalidTaskGraphError("task graph contains a dependency cycle")
+        return {task_id: tuple(values) for task_id, values in dependents.items()}
 
 
 __all__ = ["TaskGraph"]
