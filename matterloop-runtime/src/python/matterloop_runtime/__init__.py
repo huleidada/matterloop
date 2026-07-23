@@ -16,6 +16,19 @@ from matterloop_runtime.errors import (
     SandboxPathError,
 )
 from matterloop_runtime.facades import AsyncClosable, AsyncRuntime, LocalRuntime, LoopEngine
+from matterloop_runtime.idempotency import (
+    DuplicateExecutionError,
+    ExecutionCallable,
+    IdempotentInvoker,
+    canonical_request_hash,
+)
+from matterloop_runtime.ledger import (
+    ExecutionLedger,
+    ExecutionLedgerError,
+    ExecutionRecord,
+    ExecutionStatus,
+    InMemoryExecutionLedger,
+)
 from matterloop_runtime.queueing import (
     InMemoryQueueBackend,
     InMemoryRunRepository,
@@ -37,13 +50,29 @@ from matterloop_runtime.sandbox import (
     ProcessResult,
     Sandbox,
 )
+from matterloop_runtime.transactional import (
+    ReconciliationOutcome,
+    RecoveryAction,
+    RecoveryDecision,
+    TransactionalExecutor,
+)
+from matterloop_runtime.worker import CommandHandler, QueueWorker
 
 __all__ = [
     "AsyncRuntime",
     "AsyncClosable",
+    "CommandHandler",
     "ComponentExistsError",
     "ComponentNotFoundError",
+    "DuplicateExecutionError",
     "DuplicateRunError",
+    "ExecutionCallable",
+    "ExecutionLedger",
+    "ExecutionLedgerError",
+    "ExecutionRecord",
+    "ExecutionStatus",
+    "IdempotentInvoker",
+    "InMemoryExecutionLedger",
     "InMemoryQueueBackend",
     "InMemoryRunRepository",
     "LocalProcessSandbox",
@@ -57,7 +86,11 @@ __all__ = [
     "QueueLeaseLostError",
     "QueueProducer",
     "QueueRuntime",
+    "QueueWorker",
     "QueuedRun",
+    "ReconciliationOutcome",
+    "RecoveryAction",
+    "RecoveryDecision",
     "RenewableQueueBackend",
     "RunEventReader",
     "RunNotFoundError",
@@ -73,4 +106,6 @@ __all__ = [
     "Sandbox",
     "SandboxError",
     "SandboxPathError",
+    "TransactionalExecutor",
+    "canonical_request_hash",
 ]
