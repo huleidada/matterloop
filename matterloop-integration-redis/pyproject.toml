@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matterloop-integration-redis"
-version = "0.1.1"
+version = "0.1.2"
 description = "MatterLoop Redis 检查点、队列、运行状态与事件集成"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,8 +26,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "matterloop-core>=0.1.1,<0.2.0",
-    "matterloop-runtime>=0.1.1,<0.2.0",
+    "matterloop-core>=0.1.2,<0.2.0",
+    "matterloop-runtime>=0.1.2,<0.2.0",
     "redis>=5,<7",
 ]
 

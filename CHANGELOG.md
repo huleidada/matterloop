@@ -7,6 +7,20 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-23
+
+### Added
+
+- Failure Analysis Engine：按停止原因、验证反馈和错误模式归因，并生成可注入下一轮的纠正策略。
+- Evaluation Framework：基准/黄金/回归任务集，以及 Agent、Runtime 与领域指标和评估循环。
+- Learning Loop 与 `LoopEngineeringRuntime`：失败学习、策略优化、经验复用和多轮工程闭环。
+- Agent Communication Model：Contract Schema 校验、消息总线与管理面注册表（能力、版本、SLA）。
+- Memory 四层记忆：Working、Episodic、Semantic（向量与知识图谱）和 Procedural 参考实现。
+- Event Bus、Event Router、生命周期处理器辅助与按 run/租户聚合的成本追踪。
+- Execution Ledger、幂等调用、事务检查点与可水平扩展的 QueueWorker。
+- MCP Governance：统一网关、风险分级策略、三维访问控制、配额与审计。
+- 多租户隔离、令牌认证、角色授权与数据访问策略。
+
 ## [0.1.1] - 2026-07-21
 
 ### Added
@@ -44,6 +58,7 @@
 - 模型 continuation/reasoning 不进入公开结果，日志与事件支持敏感字段脱敏。
 - Shell 工具使用 argv 调用，文件与 HTTP 工具提供路径、协议、host 和响应大小边界。
 
-[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/huleidada/matterloop/releases/tag/v0.1.2
 [0.1.1]: https://github.com/huleidada/matterloop/releases/tag/v0.1.1
 [0.1.0]: https://github.com/huleidada/matterloop/releases/tag/v0.1.0
