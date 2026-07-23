@@ -7,6 +7,25 @@ version entry covers the complete component set instead of maintaining separate 
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-23
+
+### Added
+
+- Failure Analysis Engine that attributes stop reasons, verification feedback, and error patterns, and generates
+  correction strategies for the next loop.
+- Evaluation Framework with benchmark, golden, and regression datasets, plus Agent, Runtime, and domain metrics and
+  an evaluation loop.
+- Learning Loop and `LoopEngineeringRuntime` for failure learning, strategy optimization, experience reuse, and
+  multi-round engineering loops.
+- Agent Communication Model with Contract schema validation, a message bus, and a managed registry for capabilities,
+  versions, and SLA.
+- Four-layer Memory reference implementations: Working, Episodic, Semantic (vectors and knowledge graphs), and
+  Procedural.
+- Event Bus, Event Router, lifecycle handler helpers, and cost tracking aggregated by run and tenant.
+- Execution Ledger, idempotent invocation, transactional checkpoints, and a horizontally scalable QueueWorker.
+- MCP Governance with a unified gateway, risk-tiered policies, three-dimensional access control, quotas, and audit.
+- Multi-tenant isolation, token authentication, role-based authorization, and data-access policies.
+
 ## [0.1.1] - 2026-07-21
 
 ### Added
@@ -52,6 +71,7 @@ version entry covers the complete component set instead of maintaining separate 
 - Shell tools execute argv directly, while filesystem and HTTP tools enforce path, protocol, host, and response-size
   boundaries.
 
-[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/huleidada/matterloop/releases/tag/v0.1.2
 [0.1.1]: https://github.com/huleidada/matterloop/releases/tag/v0.1.1
 [0.1.0]: https://github.com/huleidada/matterloop/releases/tag/v0.1.0

@@ -78,11 +78,11 @@ python -m pip install --index-url https://pypi.org/simple \
 
 # Production and CI: pin an artifact version that you have validated
 python -m pip install --index-url https://pypi.org/simple \
-  "matterloop-presets==0.1.1"
+  "matterloop-presets==0.1.2"
 ```
 
-All 12 `v0.1.1` distributions provide a wheel, an sdist, and Trusted Publishing attestations. See the
-[GitHub Release](https://github.com/huleidada/matterloop/releases/tag/v0.1.1) for the corresponding release record.
+All 12 `v0.1.2` distributions provide a wheel, an sdist, and Trusted Publishing attestations. See the
+[GitHub Release](https://github.com/huleidada/matterloop/releases/tag/v0.1.2) for the corresponding release record.
 Install into a virtual environment and use `python -m pip` so the artifacts go to the intended Python interpreter.
 
 ### Install components on demand
@@ -111,9 +111,9 @@ For example, install only Core and the model abstraction, or add one queue integ
 python -m pip install "matterloop-core>=0.1.0,<0.2.0" \
   "matterloop-models>=0.1.0,<0.2.0"
 
-python -m pip install "matterloop-presets==0.1.1" \
-  "matterloop-integration-fastapi==0.1.1" \
-  "matterloop-integration-celery==0.1.1"
+python -m pip install "matterloop-presets==0.1.2" \
+  "matterloop-integration-fastapi==0.1.2" \
+  "matterloop-integration-celery==0.1.2"
 ```
 
 Celery push queues and Redis pull queues are alternative task transports; select one for a deployment.
@@ -146,7 +146,7 @@ index:
 ```bash
 python -m pip install \
   --index-url https://packages.example.com/repository/pypi/simple \
-  "matterloop-presets==0.1.1"
+  "matterloop-presets==0.1.2"
 ```
 
 - Use one enterprise index that proxies public PyPI, or ensure it contains all eight foundation distributions and
@@ -164,7 +164,7 @@ Air-gapped environments can install from a scanned and approved wheelhouse witho
 
 ```bash
 python -m pip install --no-index --find-links /opt/matterloop-wheelhouse \
-  "matterloop-presets==0.1.1"
+  "matterloop-presets==0.1.2"
 ```
 
 ### Verify the installation
@@ -177,7 +177,7 @@ python -m pip check
 python -c "from importlib.metadata import version; import matterloop_core, matterloop_presets; print(version('matterloop-presets'))"
 ```
 
-The expected version is `0.1.1`, and `pip check` should report `No broken requirements found`.
+The expected version is `0.1.2`, and `pip check` should report `No broken requirements found`.
 
 ## Quick start
 
