@@ -35,6 +35,7 @@ class LoopEventType(str, Enum):
     VERIFICATION_STARTED = "verification.started"
     ITERATION_COMPLETED = "iteration.completed"
     COMPLETION_EVALUATION_STARTED = "completion.evaluation_started"
+    COMPLETION_EVALUATION_COMPLETED = "completion.evaluation_completed"
     COMPLETION_REPLAN_REQUESTED = "completion.replan_requested"
     LOOP_COMPLETED = "loop.completed"
     LOOP_BLOCKED = "loop.blocked"

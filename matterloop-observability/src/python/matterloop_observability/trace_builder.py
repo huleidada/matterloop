@@ -130,7 +130,10 @@ class TraceBuilder:
                 self._complete_iteration(state, run_id, event)
             elif event.event_type is LoopEventType.COMPLETION_EVALUATION_STARTED:
                 self._open_reviewer(state, run_id, event)
-            elif event.event_type is LoopEventType.COMPLETION_REPLAN_REQUESTED:
+            elif event.event_type in {
+                LoopEventType.COMPLETION_EVALUATION_COMPLETED,
+                LoopEventType.COMPLETION_REPLAN_REQUESTED,
+            }:
                 self._close_role(state, "reviewer", event)
 
     def _ensure_root(self, state: _RunTrace, run_id: str, event: LoopEvent) -> None:

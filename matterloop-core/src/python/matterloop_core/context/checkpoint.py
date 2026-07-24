@@ -31,18 +31,15 @@ from matterloop_core.state import LoopStatus, StopReason
 
 
 class LoopCheckpointCodec:
-    """把上下文转换为可跨进程保存的版本化 JSON 数据。
+    """把上下文转换为可跨进程保存的严格 JSON 数据。
 
-    编码结果只包含 JSON 标准类型。解码器严格拒绝未知版本和错误字段类型，避免把损坏
-    或来自未来版本的数据静默解释成当前状态。
+    编码结果只包含 JSON 标准类型。解码器只接受顶层为 ``context`` 的当前结构，并严格校验
+    字段类型，避免把损坏或来自其他版本的数据静默解释成当前状态。
     """
-
-    schema_version = 2
 
     def encode(self, context: LoopContext) -> dict[str, object]:
         """把上下文编码为可以直接交给 ``json.dumps`` 的字典。"""
         return {
-            "schema_version": self.schema_version,
             "context": {
                 "request": self._encode_request(context.request),
                 "run_id": context.run_id,
@@ -93,6 +90,9 @@ class LoopCheckpointCodec:
                     if context.active_started_at is not None
                     else None
                 ),
+                "propagation_context": self._string_mapping(
+                    context.propagation_context, "propagation_context"
+                ),
                 "started_at": context.started_at.isoformat(),
                 "updated_at": context.updated_at.isoformat(),
             },
@@ -105,9 +105,10 @@ class LoopCheckpointCodec:
             CheckpointSchemaError: 当版本不支持或字段结构无效时抛出。
         """
         try:
-            version = self._integer(payload.get("schema_version"), "schema_version")
-            if version != self.schema_version:
-                raise CheckpointSchemaError(f"unsupported checkpoint schema version: {version}")
+            if set(payload) != {"context"}:
+                raise CheckpointSchemaError(
+                    "checkpoint must contain only the current 'context' field"
+                )
             data = self._mapping(payload.get("context"), "context")
             request = self._decode_request(self._mapping(data.get("request"), "request"))
             records = [
@@ -175,6 +176,9 @@ class LoopCheckpointCodec:
                 ),
                 active_started_at=self._optional_datetime(
                     data.get("active_started_at"), "active_started_at"
+                ),
+                propagation_context=self._string_mapping(
+                    data.get("propagation_context"), "propagation_context"
                 ),
                 started_at=self._datetime(data.get("started_at"), "started_at"),
                 updated_at=self._datetime(data.get("updated_at"), "updated_at"),
@@ -472,6 +476,12 @@ class LoopCheckpointCodec:
 
     def _string_tuple(self, value: object, field_name: str) -> tuple[str, ...]:
         return tuple(self._text(item, field_name) for item in self._sequence(value, field_name))
+
+    def _string_mapping(self, value: object, field_name: str) -> dict[str, str]:
+        return {
+            key: self._text(item, f"{field_name}.{key}")
+            for key, item in self._mapping(value, field_name).items()
+        }
 
     @staticmethod
     def _text(value: object, field_name: str, *, allow_empty: bool = False) -> str:

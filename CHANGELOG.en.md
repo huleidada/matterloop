@@ -14,6 +14,21 @@ version entry covers the complete component set instead of maintaining separate 
   exporters, and `TracedModelClient` wraps a model client to record generation spans automatically.
 - Added an optional `trace_exporter` parameter to the production preset that attaches the TraceBuilder to the
   audit event pipeline and wraps the model client, draining the export pipeline when the runtime closes.
+- Added the public lifecycle event `LoopEventType.COMPLETION_EVALUATION_COMPLETED` to Core, emitted after
+  the whole-run acceptance decision (accept/replan/request human) so subscribers know exactly when the
+  evaluation ends.
+- Added live OTel tracing to observability: `OpenTelemetryTracePublisher` maintains real span contexts
+  during Loop execution and `OpenTelemetryModelClient` records nested generation spans, so database/HTTP
+  auto-instrumentation joins the same trace; a block or pause persists W3C `traceparent`/`tracestate` in
+  the same checkpoint CAS and resume creates a real child Span, while `run_id` remains business correlation.
+- Added the Core `CheckpointPreparer` protocol and `LoopContext.propagation_context`, allowing event
+  publishers to place durable correlation data such as W3C propagation context into the checkpoint CAS;
+  `CompositeEventPublisher` forwards the hook.
+
+### Changed
+
+- The current checkpoint layout adds `propagation_context` and no longer carries `schema_version`; the
+  Codec accepts only the complete layout with top-level `context`.
 
 ### Deprecated
 

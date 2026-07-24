@@ -138,6 +138,64 @@ normalized to 0-1), `data_type`, `source`, `run_id`, `step_id`, `comment`, `evid
 `score_from_review` accepts any duck-typed review result with `score`/`summary`/`evidence`
 attributes and does not require the agents package.
 
+## Production: one live OTel trace with the database
+
+When the application also enables OTel auto-instrumentation for SQLAlchemy, HTTP clients, or a
+message queue, the best practice is for the **application to create exactly one `TracerProvider`**:
+set it as the global Provider first, then pass that same instance to `OtelExporter`. When the
+production preset receives an `OtelExporter`, it creates `matterloop.run`,
+Planner/Executor/Verifier, and generation spans while the Loop is actually running. Database and
+HTTP spans emitted by auto-instrumentation inherit the active phase and become children in the same
+trace. Before a block or pause, the live publisher writes the current `matterloop.run` W3C
+`traceparent`/`tracestate` into the same checkpoint CAS. Resume extracts that context to create a
+real child span, so cross-process recovery remains in one Trace with an exported parent. Only
+`traceparent`/`tracestate` are persisted: W3C baggage is excluded so business metadata cannot enter
+checkpoint storage. `run_id` remains a business correlation and query attribute; it does not determine
+the OTel Trace ID.
+
+```bash
+pip install "matterloop-observability[otel]" opentelemetry-instrumentation-sqlalchemy
+```
+
+```python
+import os
+
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+from matterloop_observability import OtelExporter
+from matterloop_presets import build_production_runtime
+
+provider = TracerProvider(Resource.create({"service.name": "my-agent-service"}))
+provider.add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter(endpoint=os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]))
+)
+# A process can set this only once; do it before framework and auto-instrumentation setup.
+trace.set_tracer_provider(provider)
+SQLAlchemyInstrumentor().instrument(engine=engine)
+
+runtime = build_production_runtime(
+    model=model_client,
+    config=production_config,
+    queue_backend=queue_backend,
+    run_repository=run_repository,
+    checkpoint_store=checkpoint_store,
+    audit_publisher=audit_publisher,
+    trace_exporter=OtelExporter(tracer_provider=provider),
+)
+```
+
+On shutdown, first call `await runtime.aclose()`, then let the application call
+`provider.force_flush()` and `provider.shutdown()` on the Provider it owns. Do not use the internal
+Provider created by `OtelExporter(endpoint=...)` for database auto-instrumentation: it is not
+registered as the global Provider, so database spans would go to another trace (or the default
+no-op Provider). The production preset logs a warning for this configuration, and the caller still
+owns shutdown of the internal Provider.
+
 ## Model call spans
 
 ```python
@@ -154,7 +212,9 @@ no `run_id`, the call passes straight through; observability never blocks a call
 recorded as an ERROR span and re-raised unchanged. The Planner, Worker, Verifier, and Reviewer in
 the agents package already write `run_id`, `step_id`, and `agent` into request metadata, so
 wrapping the client registered in the `ModelRegistry` yields model spans automatically. The
-production preset can wire all of this through its `trace_exporter` parameter; see
+production preset can wire all of this through its `trace_exporter` parameter. A regular
+`SpanExporter` uses the offline `TracedModelClient`; an `OtelExporter` with a shared Provider uses
+the live `OpenTelemetryModelClient`, nesting generation in its active phase. See
 [matterloop-presets](../matterloop-presets/README.en.md).
 
 ## Extension points

@@ -157,10 +157,10 @@ deployment that requires gap-free audit must detect and compensate for sequence 
 persistence boundary so state and an outbox are written atomically. Replacing only the Publisher cannot provide this
 property, and `event_sequence` alone does not justify an “exactly once” claim.
 
-`LoopCheckpointCodec` currently accepts schema v2 only. A persistence implementation must retain at least the current
-plan, step cursor, approved `step_id` values, `active_operation_id`, pending execution result, heartbeat, human
-interaction history, event sequence, revision, and active time. Unknown schemas must fail rather than guess at field
-meanings.
+`LoopCheckpointCodec` carries no schema version and strictly accepts the current complete layout (its top level has
+only `context`). A persistence implementation must retain at least the current plan, step cursor, approved `step_id`
+values, `active_operation_id`, pending execution result, heartbeat, human interaction history, event sequence,
+revision, and active time. Extra fields or incorrectly typed fields must fail rather than guess at their meanings.
 
 CAS ensures that two writers cannot silently overwrite each other; it is not an execution lease held for the entire
 run. Core saves state before invoking components such as the Planner and Executor, so competing controllers that

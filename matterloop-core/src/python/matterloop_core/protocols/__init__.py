@@ -2,6 +2,7 @@
 
 from matterloop_core.protocols.interfaces import (
     ApprovalGate,
+    CheckpointPreparer,
     CheckpointStore,
     CompletionEvaluator,
     EventPublisher,
@@ -14,6 +15,7 @@ from matterloop_core.protocols.interfaces import (
 
 __all__ = [
     "ApprovalGate",
+    "CheckpointPreparer",
     "CheckpointStore",
     "CompletionEvaluator",
     "EventPublisher",

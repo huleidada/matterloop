@@ -41,6 +41,7 @@ from matterloop_core.exceptions import (
 )
 from matterloop_core.protocols import (
     ApprovalGate,
+    CheckpointPreparer,
     CheckpointStore,
     CompletionEvaluator,
     EventPublisher,
@@ -612,6 +613,11 @@ class AgentLoop:
             )
             if decision.feedback:
                 context.feedback = decision.feedback
+            await self._checkpoint_and_emit(
+                context,
+                LoopEventType.COMPLETION_EVALUATION_COMPLETED,
+                detail=decision.action.value,
+            )
             if decision.action is CompletionAction.REPLAN:
                 context.current_plan = None
                 context.current_step_index = 0
@@ -1009,6 +1015,8 @@ class AgentLoop:
         context.updated_at = datetime.now(timezone.utc)
         first_sequence = context.event_sequence + 1
         context.event_sequence += len(event_types)
+        if isinstance(self.events, CheckpointPreparer):
+            await self.events.prepare_checkpoint(context, event_types)
         expected_revision = context.revision
         revision = await self.checkpoint_store.save(
             context.snapshot(), expected_revision=expected_revision

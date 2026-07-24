@@ -121,6 +121,58 @@ events = CompositeEventPublisher(
 评分的映射；`score_from_review` 接受具备 `score`/`summary`/`evidence` 属性的鸭子类型审查结论，
 不要求安装 agents 组件。
 
+## 生产环境：与数据库共用一条实时 OTel Trace
+
+如果应用还要为 SQLAlchemy、HTTP 客户端或消息队列做 OTel 自动埋点，最佳实践是**由应用只创建一个
+`TracerProvider`**：先把它设置为全局 Provider，再把同一实例传给 `OtelExporter`。production preset
+识别到 `OtelExporter` 后，会在 Loop 执行时实时创建 `matterloop.run`、Planner/Executor/Verifier 和
+generation Span；自动 instrumentation 产生的数据库/HTTP Span 会继承当前阶段，成为同一 Trace 的子节点。
+阻塞或暂停前，实时发布器会把当前 `matterloop.run` 的标准 W3C `traceparent`/`tracestate` 写入同一次
+checkpoint CAS。恢复时从这个上下文创建新的真实子 Span：人工等待不计入执行时长，跨进程恢复仍在同一条
+Trace 中，并且后端能找到已导出的真实父节点。checkpoint 只保存 `traceparent`/`tracestate`，不会持久化
+W3C baggage，避免业务元数据被带入存储。`run_id` 只作为业务关联标识和查询属性，不决定 OTel Trace ID。
+
+```bash
+pip install "matterloop-observability[otel]" opentelemetry-instrumentation-sqlalchemy
+```
+
+```python
+import os
+
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+from matterloop_observability import OtelExporter
+from matterloop_presets import build_production_runtime
+
+provider = TracerProvider(Resource.create({"service.name": "my-agent-service"}))
+provider.add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter(endpoint=os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]))
+)
+# 一个进程只能设置一次；必须在初始化框架和自动 instrumentation 前完成。
+trace.set_tracer_provider(provider)
+SQLAlchemyInstrumentor().instrument(engine=engine)
+
+runtime = build_production_runtime(
+    model=model_client,
+    config=production_config,
+    queue_backend=queue_backend,
+    run_repository=run_repository,
+    checkpoint_store=checkpoint_store,
+    audit_publisher=audit_publisher,
+    trace_exporter=OtelExporter(tracer_provider=provider),
+)
+```
+
+应用关闭时先 `await runtime.aclose()`，再由应用对它拥有的 Provider 执行 `provider.force_flush()` 和
+`provider.shutdown()`。不要把 `OtelExporter(endpoint=...)` 自行创建的内部 Provider 用于数据库自动埋点：
+它没有注册成全局 Provider，数据库 Span 会落到另一条 Trace（或被默认 no-op Provider 丢弃）；production
+preset 会为这种配置记录警告，内部 Provider 的关闭也仍由调用方管理。
+
 ## 模型调用跨度
 
 ```python
@@ -135,7 +187,9 @@ client = wrap_model_client(model_client, trace_builder)
 缺少 `run_id` 时直接透传，观测永远不会阻断调用。模型异常会记录 ERROR 跨度并原样继续抛出。
 agents 组件的 Planner、Worker、Verifier 和 Reviewer 已在请求 metadata 中写入 `run_id`、`step_id`
 和 `agent`，包装注册进 `ModelRegistry` 的客户端即可自动获得模型跨度；production preset 可通过
-`trace_exporter` 参数一键完成这套装配，见 [matterloop-presets](../matterloop-presets/README.md)。
+`trace_exporter` 参数一键完成这套装配。传入普通 `SpanExporter` 时使用离线 `TracedModelClient`；传入
+共享 Provider 的 `OtelExporter` 时使用实时 `OpenTelemetryModelClient`，generation 会嵌套在对应阶段下。
+见 [matterloop-presets](../matterloop-presets/README.md)。
 
 ## 扩展方式
 

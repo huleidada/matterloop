@@ -230,7 +230,7 @@ assert new_revision > context.revision
 
 When two resume requests or two human responses write from the same revision, only one can succeed.
 The other receives `CheckpointConflictError` and must reload; it cannot overwrite the winner.
-`LoopCheckpointCodec` provides strict schema v2 JSON encoding and decoding:
+`LoopCheckpointCodec` provides strict JSON encoding and decoding for the current layout:
 
 ```python
 from matterloop_core import LoopCheckpointCodec
@@ -240,16 +240,17 @@ payload = codec.dumps(context)
 restored = codec.loads(payload)
 ```
 
-Schema v2 stores the plan cursor, records, human history, approved steps, execution operation,
-pending verification result, heartbeat, active timing, event sequence, and revision. Older v2
-checkpoints that omit the new optional fields decode them as empty. Unknown versions, incorrectly
-typed fields, timezone-naive timestamps, or non-JSON metadata raise `CheckpointSchemaError`.
+The current layout stores the plan cursor, records, human history, approved steps, execution operation,
+pending verification result, heartbeat, active timing, event sequence, revision, and
+`propagation_context`. Its top level permits only `context`; incorrectly typed fields,
+timezone-naive timestamps, or non-JSON metadata raise `CheckpointSchemaError`.
 
 Every state commit follows this fixed order:
 
 1. Update the context and allocate the next continuous `event_sequence`.
-2. Save the checkpoint with the previous revision as the CAS condition.
-3. After the save succeeds, invoke `EventPublisher` in sequence order.
+2. An optional `CheckpointPreparer` adds correlation data for this CAS commit.
+3. Save the checkpoint with the previous revision as the CAS condition.
+4. After the save succeeds, invoke `EventPublisher` in sequence order.
 
 The state represented by an event has therefore already been saved, but a successful checkpoint
 does not guarantee event delivery. Core has no transactional outbox spanning the state store and
@@ -272,6 +273,7 @@ Every port is a `runtime_checkable Protocol`; implementations do not need to inh
 | `CompletionEvaluator` | `await evaluate(context) -> CompletionDecision` | Accepts, replans, requests human review, or stops |
 | `LoopPolicy` | `can_continue(context) -> bool` | `false` produces `POLICY_REJECTED` at a safe boundary |
 | `CheckpointStore` | `save/load` | Must provide atomic CAS; conflicts propagate to the caller |
+| `CheckpointPreparer` | `await prepare_checkpoint(context, event_types)` | Optional; adds correlation data persisted by this CAS without changing business state |
 | `EventPublisher` | `await publish(event)` | Core neither retries nor isolates publication failures |
 
 Core passes an isolated `LoopContext` snapshot to components. Mutating the snapshot does not advance
@@ -334,7 +336,7 @@ information first.
 
 These fields are direct dependencies of checkpoints, protocols, and integration layers. Dynamic
 defaults are a new UUID hex string or the current UTC time. Every `Mapping` is only shallowly frozen;
-its values must still be JSON-serializable when persisted with schema v2.
+its values must still be JSON-serializable when persisted.
 
 ### Requests and plans
 
@@ -404,7 +406,8 @@ its values must still be JSON-serializable when persisted with schema v2.
   `active_operation_id: str | None = None`, `pending_execution: ExecutionResult | None = None`,
   `pending_attempt: int | None = None`, `last_heartbeat_at: datetime | None = None`,
   `active_elapsed_seconds: float = 0`, `active_started_at: datetime | None = None`,
-  `started_at: datetime = <UTC>`, `updated_at: datetime = <UTC>`. Extension components receive a
+  `propagation_context: dict[str, str] = {}`, `started_at: datetime = <UTC>`,
+  `updated_at: datetime = <UTC>`. Extension components receive a
   snapshot and cannot advance the controller by mutating it.
 - `LoopEvent`: required `event_type: LoopEventType`, `context: LoopContext`;
   `occurred_at: datetime = <UTC>`, `detail: str = ""`, `sequence: int = 0`. Sequences published by

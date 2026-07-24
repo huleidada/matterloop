@@ -110,8 +110,6 @@ def _otel_attribute_value(value: Any) -> Any:
     """把观测属性值折算为 OTel 支持的标量或标量数组。"""
     if isinstance(value, (str, bool, int, float)):
         return value
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [str(item) for item in value]
     return json.dumps(_jsonable(value), ensure_ascii=False, sort_keys=True)
 
 
@@ -141,6 +139,7 @@ class OtelExporter:
     ) -> None:
         if max_pending_items < 1:
             raise ValueError("max_pending_items must be at least 1")
+        self._owns_tracer_provider = tracer_provider is None
         try:
             self._trace = importlib.import_module("opentelemetry.trace")
             sdk_trace = importlib.import_module("opentelemetry.sdk.trace")
@@ -173,6 +172,16 @@ class OtelExporter:
         self._lock = threading.Lock()
         self._pending: dict[str, list[ExportItem]] = {}
         self._max_pending_items = max_pending_items
+
+    @property
+    def tracer_provider(self) -> Any:
+        """返回实际写出实时 OTel Span 的 TracerProvider。"""
+        return self._provider
+
+    @property
+    def owns_tracer_provider(self) -> bool:
+        """内部创建 Provider 时为真；其生命周期不能替代应用的全局 Provider。"""
+        return self._owns_tracer_provider
 
     def export(self, batch: Sequence[ExportItem]) -> None:
         """把一批记录按父子关系重建为 OTel 跨度并交给 span processor。"""

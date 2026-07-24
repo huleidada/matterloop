@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from enum import Enum
 
-from matterloop_core import EventHandler, EventPublisher, LoopEvent
+from matterloop_core import EventHandler, EventPublisher, LoopContext, LoopEvent, LoopEventType
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,21 @@ class CompositeEventPublisher:
                     "事件发布器执行失败",
                     extra={"run_id": event.context.run_id, "event": event.event_type.value},
                 )
+
+    async def prepare_checkpoint(
+        self, context: LoopContext, event_types: tuple[LoopEventType, ...]
+    ) -> None:
+        """转发可选保存前钩子，使关联信息与检查点使用同一次 CAS。"""
+        for publisher in self._publishers:
+            prepare = getattr(publisher, "prepare_checkpoint", None)
+            if not callable(prepare):
+                continue
+            try:
+                await prepare(context, event_types)
+            except Exception:
+                if self._failure_mode is PublisherFailureMode.RAISE:
+                    raise
+                logger.exception("检查点准备器执行失败", extra={"run_id": context.run_id})
 
 
 class HandlerEventPublisher:

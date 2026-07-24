@@ -225,6 +225,7 @@ class LoopContext:
     revision: int = 0
     active_elapsed_seconds: float = 0
     active_started_at: datetime | None = None
+    propagation_context: dict[str, str] = field(default_factory=dict)
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -261,6 +262,7 @@ class LoopContext:
             revision=self.revision,
             active_elapsed_seconds=self.active_elapsed_seconds,
             active_started_at=self.active_started_at,
+            propagation_context=dict(self.propagation_context),
             started_at=self.started_at,
             updated_at=self.updated_at,
         )

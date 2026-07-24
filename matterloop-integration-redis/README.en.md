@@ -60,7 +60,7 @@ object.
 | --- | --- | --- | --- | --- | --- |
 | `RedisCheckpointStore.client` | `AsyncRedisClient` | Yes | None | Executes `GET` and Lua CAS | The host owns the connection; it is not stored in the payload |
 | `RedisCheckpointStore.config` | `Optional[RedisConfig]` | No | `RedisConfig()` | Supplies the Key prefix | Stores neither connection data nor credentials |
-| `RedisCheckpointStore.codec` | `Optional[LoopCheckpointCodec]` | No | `LoopCheckpointCodec()` | Encodes and decodes Core schema v2 | Unknown versions and invalid fields fail strictly |
+| `RedisCheckpointStore.codec` | `Optional[LoopCheckpointCodec]` | No | `LoopCheckpointCodec()` | Encodes and decodes Core's current checkpoint layout | Invalid fields fail strictly |
 | `save.context` | `LoopContext` | Yes | None | Complete isolated snapshot to commit | Stored as a JSON String at `<prefix>:checkpoints:<run_id>` |
 | `save.expected_revision` | `Optional[int]` | No | `context.revision` | CAS version observed by the caller | Must be a non-negative integer; create requires `0` |
 | `load.run_id` | `str` | Yes | None | Stable run identifier to recover | Empty values fail; payload `run_id` must match the Key |
@@ -99,7 +99,7 @@ Every Key is stored under `<prefix>`:
 <prefix>:queue:jobs             Hash
 <prefix>:queue:leases           Hash
 <prefix>:queue:lease-expiry     Sorted Set
-<prefix>:checkpoints:<run_id>   String (Core schema v2, revision CAS)
+<prefix>:checkpoints:<run_id>   String (Core current checkpoint layout, revision CAS)
 <prefix>:runs:index             Sorted Set
 <prefix>:runs:<run_id>          String (versioned JSON)
 <prefix>:events:<run_id>        Stream

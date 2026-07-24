@@ -28,7 +28,7 @@ from matterloop_models import (
     ToolCall,
 )
 from matterloop_models.providers import OpenAIModelClient, OpenAIModelConfig
-from matterloop_observability import Score, SpanRecord
+from matterloop_observability import OtelExporter, Score, SpanRecord
 from matterloop_observability.pipeline import ExportItem
 from matterloop_presets import (
     CodingPresetConfig,
@@ -418,6 +418,45 @@ def test_production_runtime_traces_spans_when_exporter_provided() -> None:
         assert all(score.name == "verification" for score in scores)
 
     asyncio.run(scenario())
+
+
+def test_production_runtime_uses_live_context_for_otel_exporter() -> None:
+    """传入 OtelExporter 时应生成同一条实时 Trace，而不是离线重建记录。"""
+    sdk_trace = pytest.importorskip("opentelemetry.sdk.trace")
+    sdk_export = pytest.importorskip("opentelemetry.sdk.trace.export")
+    in_memory = pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+    provider = sdk_trace.TracerProvider()
+    memory = in_memory.InMemorySpanExporter()
+    provider.add_span_processor(sdk_export.SimpleSpanProcessor(memory))
+
+    async def scenario() -> None:
+        runtime = build_production_runtime(
+            _simple_success_model(),
+            queue_backend=InMemoryQueueBackend(),
+            run_repository=InMemoryRunRepository(),
+            checkpoint_store=InMemoryCheckpointStore(),
+            audit_publisher=_NoopPublisher(),
+            trace_exporter=OtelExporter(tracer_provider=provider),
+        )
+        try:
+            result = await runtime.worker_runtime.run(LoopRequest("worker"), run_id="worker-otel-1")
+            assert result.status is LoopStatus.COMPLETED
+        finally:
+            await runtime.aclose()
+
+    asyncio.run(scenario())
+
+    spans = {span.name: span for span in memory.get_finished_spans()}
+    root = spans["matterloop.run"]
+    generation = spans["generation:worker"]
+    executor = spans["matterloop.executor"]
+    verifier = spans["matterloop.verifier"]
+    score = spans["score:verification"]
+    assert generation.parent is not None
+    assert generation.parent.span_id == executor.get_span_context().span_id
+    assert generation.get_span_context().trace_id == root.get_span_context().trace_id
+    assert score.parent is not None
+    assert score.parent.span_id == verifier.get_span_context().span_id
 
 
 def test_production_runtime_without_exporter_keeps_event_pipeline_unchanged() -> None:

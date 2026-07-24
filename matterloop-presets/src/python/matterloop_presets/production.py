@@ -1,16 +1,20 @@
 """显式基础设施依赖的生产队列与 worker 预设。"""
 
 import asyncio
+import logging
 
 from matterloop_core import ApprovalGate, CheckpointStore, EventPublisher
 from matterloop_models import ModelClient
 from matterloop_observability import (
     BatchingPipeline,
     CompositeEventPublisher,
+    OpenTelemetryTracePublisher,
+    OtelExporter,
     PublisherFailureMode,
     SpanExporter,
     TraceBuilder,
     wrap_model_client,
+    wrap_otel_model_client,
 )
 from matterloop_policies import AllowAllApproval
 from matterloop_runtime import (
@@ -26,6 +30,8 @@ from matterloop_presets._assembly import _assemble_runtime
 from matterloop_presets.config import ProductionPresetConfig
 from matterloop_presets.errors import PresetConfigurationError
 from matterloop_presets.runtime import ProductionLocalRuntime, ProductionRuntime
+
+logger = logging.getLogger(__name__)
 
 
 class _PipelineShutdownResource:
@@ -65,8 +71,9 @@ def build_production_runtime(
         audit_publisher: 显式审计事件发布器，发布失败会抛出。
         event_reader: 可选审计事件读取器。
         approval_gate: 可选生产审批实现。
-        trace_exporter: 可选跨度与评分导出器；提供时把 TraceBuilder 挂入事件管线，
-            并把模型客户端包装为记录 generation 跨度的 TracedModelClient。
+        trace_exporter: 可选跨度与评分导出器。传入 OtelExporter 时创建实时 OTel 上下文，
+            让数据库等自动 instrumentation 产生的 Span 进入同一条 Agent Trace；其他导出器
+            使用 TraceBuilder 和 TracedModelClient 重建关闭后的树形记录。
 
     Returns:
         分离队列客户端与实际 Loop worker 的生产运行时。
@@ -98,7 +105,18 @@ def build_production_runtime(
     publishers: tuple[EventPublisher, ...] = (audit_publisher,)
     extra_resources: tuple[AsyncClosable, ...] = ()
     actual_model = model
-    if trace_exporter is not None:
+    if isinstance(trace_exporter, OtelExporter):
+        if trace_exporter.owns_tracer_provider:
+            logger.warning(
+                "OtelExporter(endpoint=...) 的内部 TracerProvider 未注册为全局 Provider；"
+                "数据库和 HTTP 自动 instrumentation 不会进入 MatterLoop Trace，且调用方需管理其关闭"
+            )
+        publishers = (
+            audit_publisher,
+            OpenTelemetryTracePublisher(trace_exporter.tracer_provider),
+        )
+        actual_model = wrap_otel_model_client(model, trace_exporter.tracer_provider)
+    elif trace_exporter is not None:
         pipeline = BatchingPipeline(trace_exporter)
         trace_builder = TraceBuilder(pipeline)
         publishers = (audit_publisher, trace_builder)
