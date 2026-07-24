@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matterloop-integration-celery"
-version = "0.1.1"
+version = "0.1.2"
 description = "MatterLoop Celery 队列集成"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,8 +27,8 @@ classifiers = [
 ]
 dependencies = [
     "celery>=5.4,<6",
-    "matterloop-core>=0.1.1,<0.2.0",
-    "matterloop-runtime>=0.1.1,<0.2.0",
+    "matterloop-core>=0.1.2,<0.2.0",
+    "matterloop-runtime>=0.1.2,<0.2.0",
 ]
 
 [project.urls]

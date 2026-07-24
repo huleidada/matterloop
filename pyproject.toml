@@ -1,6 +1,6 @@
 [project]
 name = "matterloop-workspace"
-version = "0.1.1"
+version = "0.1.2"
 description = "MatterLoop 多模块组件工程工作区"
 requires-python = ">=3.10"
 dependencies = [
