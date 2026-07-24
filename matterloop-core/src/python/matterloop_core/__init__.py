@@ -46,6 +46,7 @@ from matterloop_core.exceptions import (
 from matterloop_core.loop import AgentLoop
 from matterloop_core.protocols import (
     ApprovalGate,
+    CheckpointPreparer,
     CheckpointStore,
     CompletionEvaluator,
     EventPublisher,
@@ -70,6 +71,7 @@ __all__ = [
     "ArtifactRef",
     "CheckpointSchemaError",
     "CheckpointConflictError",
+    "CheckpointPreparer",
     "CheckpointStore",
     "CompletionAction",
     "CompletionDecision",

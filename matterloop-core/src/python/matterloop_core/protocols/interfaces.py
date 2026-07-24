@@ -12,7 +12,7 @@ from matterloop_core.context import (
     VerificationResult,
 )
 from matterloop_core.control import ApprovalDecision, CompletionDecision, RetryDecision
-from matterloop_core.events import LoopEvent
+from matterloop_core.events import LoopEvent, LoopEventType
 
 
 @runtime_checkable
@@ -86,6 +86,17 @@ class EventPublisher(Protocol):
 
     async def publish(self, event: LoopEvent) -> None:
         """发布一个不可变生命周期事件。"""
+        ...
+
+
+@runtime_checkable
+class CheckpointPreparer(Protocol):
+    """在控制器提交检查点前补充可持久化关联信息的可选扩展。"""
+
+    async def prepare_checkpoint(
+        self, context: LoopContext, event_types: tuple[LoopEventType, ...]
+    ) -> None:
+        """修改将随本次 CAS 保存的上下文，不得改变 Loop 的业务状态。"""
         ...
 
 

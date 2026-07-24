@@ -88,12 +88,23 @@ runtime = build_production_runtime(
     audit_publisher=audit_publisher,
     event_reader=event_reader,
     approval_gate=approval_gate,
+    trace_exporter=JsonlExporter("traces.jsonl"),
 )
 ```
 
 `queue_backend`、`run_repository`、`checkpoint_store` 和 `audit_publisher` 缺一即抛
 `PresetConfigurationError`，不会回退到内存实现。返回的 `ProductionRuntime` 包含控制面的
 `queue_runtime` 和执行面的 `worker_runtime`；租约、ack、续租、死信和 Worker 循环仍由部署方负责。
+
+`trace_exporter` 是可选的：传入普通 `SpanExporter`（如 `JsonlExporter`）时，preset 会把
+`TraceBuilder` 挂入审计事件管线、把模型客户端包装为 `TracedModelClient`，并在
+`ProductionRuntime.aclose()` 时自动排空导出流水线。传入共享 `TracerProvider` 的 `OtelExporter` 时，
+preset 改为实时 OTel Context：`matterloop.run`、各执行阶段、generation 以及 SQLAlchemy/HTTP 等自动
+instrumentation 的 Span 处在同一条 Trace。Provider 的创建、全局注册和关闭仍由应用负责；完整的数据库
+配置见 [matterloop-observability](../matterloop-observability/README.md#生产环境与数据库共用一条实时-otel-trace)。
+阻塞/暂停会把 W3C `traceparent`/`tracestate` 与 Loop checkpoint 使用同一次 CAS 持久化，恢复会创建真实
+子 Span，不依赖 `run_id` 派生或合成父节点；W3C baggage 不会写入 checkpoint。
+缺省不创建任何 tracing 资源，事件管线行为与之前完全一致。
 
 ## 配置速查
 

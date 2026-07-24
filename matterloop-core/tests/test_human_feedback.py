@@ -39,6 +39,25 @@ class DeferredApproval:
         return ApprovalDecision.DEFERRED
 
 
+class CheckpointPropagator:
+    """模拟可观测性组件在暂停前写入可恢复关联信息。"""
+
+    def __init__(self) -> None:
+        self.prepared_event_types: list[tuple[LoopEventType, ...]] = []
+
+    async def prepare_checkpoint(
+        self, context: LoopContext, event_types: tuple[LoopEventType, ...]
+    ) -> None:
+        self.prepared_event_types.append(event_types)
+        if LoopEventType.LOOP_PAUSED in event_types:
+            context.propagation_context["traceparent"] = (
+                "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+            )
+
+    async def publish(self, event: LoopEvent) -> None:
+        del event
+
+
 class ApprovalPlanner:
     """生成一个需要人工审批的固定步骤。"""
 
@@ -106,6 +125,24 @@ def test_human_approval_resumes_exact_step_without_rechecking_gate() -> None:
     assert LoopEventType.HUMAN_RESPONSE_SUBMITTED in observed
     assert LoopEventType.HUMAN_APPROVED in observed
     assert LoopEventType.LOOP_RESUMED in observed
+
+
+def test_pause_checkpoint_includes_prepared_propagation_context() -> None:
+    """Core 必须在保存暂停 checkpoint 前调用可选的关联信息准备器。"""
+    loop, store, _ = build_loop()
+    propagator = CheckpointPropagator()
+    loop.events = propagator
+    loop.planners.register("default", ApprovalPlanner(), replace=True)
+    loop.approval_gate = DeferredApproval()
+
+    paused = asyncio.run(loop.run(LoopRequest("保存 OTel 父上下文")))
+
+    assert paused.status is LoopStatus.PAUSED
+    assert (LoopEventType.LOOP_PAUSED,) in propagator.prepared_event_types
+    persisted = store.contexts[paused.run_id]
+    assert persisted.propagation_context == {
+        "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+    }
 
 
 def test_human_revision_forces_replan_and_preserves_feedback_history() -> None:
@@ -210,7 +247,9 @@ def test_completion_evaluator_can_request_human_without_replaying_step() -> None
     assert completed.status is LoopStatus.COMPLETED
     assert len(completed.records) == 1
     assert evaluator.calls == 1
-    assert LoopEventType.COMPLETION_EVALUATION_STARTED in {event.event_type for event in events}
+    observed_types = {event.event_type for event in events}
+    assert LoopEventType.COMPLETION_EVALUATION_STARTED in observed_types
+    assert LoopEventType.COMPLETION_EVALUATION_COMPLETED in observed_types
 
 
 def test_completion_evaluator_replans_before_accepting() -> None:

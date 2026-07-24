@@ -102,6 +102,7 @@ def _assemble_runtime(
     executor_tools: Mapping[str, tuple[str, ...]],
     privileged_executors: frozenset[str] = frozenset(),
     require_citation: bool = False,
+    extra_resources: tuple[AsyncClosable, ...] = (),
 ) -> PresetRuntime:
     """把稳定组件协议装配为一个异步运行门面。"""
     models = ModelRegistry()
@@ -163,6 +164,7 @@ def _assemble_runtime(
     if callable(getattr(model, "aclose", None)):
         resources.append(cast(AsyncClosable, model))
     resources.extend(tool_registries.values())
+    resources.extend(extra_resources)
     return PresetRuntime(
         loop,
         models,

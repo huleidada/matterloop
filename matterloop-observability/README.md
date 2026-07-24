@@ -3,11 +3,11 @@
 # matterloop-observability
 
 MatterLoop 的事件是业务事实，不是日志字符串。`matterloop-observability` 把 Core `LoopEvent`
-接到日志、指标和 Trace，同时把日志后端与 OpenTelemetry 的进程级配置留给宿主应用。
+接到日志、指标、树形 Trace 和评分，同时把日志后端与 OpenTelemetry 的进程级配置留给宿主应用。
 
 ```bash
 pip install matterloop-observability
-# 需要 OpenTelemetry 时
+# 需要 OpenTelemetry 导出时（含 SDK 与 OTLP/HTTP Exporter）
 pip install "matterloop-observability[otel]"
 ```
 
@@ -42,8 +42,9 @@ events = CompositeEventPublisher(
 )
 ```
 
-将 `events` 注入 `AgentLoop(events=...)`。处理器按顺序执行；本包不创建后台队列，也不接管 Logger、
-Exporter、Provider 或它们的关闭流程。
+将 `events` 注入 `AgentLoop(events=...)`。处理器按顺序执行；同步处理器不创建后台队列，也不接管
+Logger 或其关闭流程。唯一的例外是下文用于 Trace 导出的 `BatchingPipeline`：它持有后台守护线程，
+由调用方在应用退出前 `shutdown()`。
 
 ## 失败策略要显式选择
 
@@ -70,15 +71,131 @@ Outbox、持久化事件表或消息系统完成原子交接。
 
 - `MetricsHandler` 保存当前进程内的事件计数，适合测试和轻量诊断。
 - `OpenTelemetryMetricsHandler` 写入 `matterloop.loop.events`，只附带事件类型和 Loop 状态。
-- `TracingHandler` 为每个事件创建短 Span，不会自动构造覆盖整个 Loop 的父 Span。
+- `TracingHandler` 已废弃：它为每个事件创建孤立的短 Span，无法还原父子关系，请改用下文的
+  `TraceBuilder`，它会在后续版本移除。
 
-OpenTelemetry 组件只使用 API。宿主必须先配置 SDK、Exporter、采样和资源属性；安装 extra 不等于
-数据会被导出。构造时缺少 OpenTelemetry 依赖会立即抛出 `RuntimeError`。
+`OpenTelemetryMetricsHandler` 与 `TracingHandler` 只使用 API，宿主必须先配置 SDK、Exporter、采样
+和资源属性，构造时缺少依赖会立即抛出 `RuntimeError`。`OtelExporter` 例外：它自带 SDK 与 OTLP/HTTP
+Exporter（由 `[otel]` extra 提供），缺少依赖时构造抛出 `ImportError`。
+
+## 树形 Trace 与评分
+
+`TraceBuilder(pipeline)` 实现 Core `EventPublisher` 协议，把生命周期事件流重建为树形跨度结构：
+根跨度覆盖整个运行，执行、验证、迭代快照和整体完成度验收各成跨度；验证跨度关闭时会把
+`VerificationResult.score`（0–100）归一提取为 `Score`。已关闭的跨度和评分进入
+`BatchingPipeline(exporter, flush_at, flush_interval)`，由后台守护线程聚批后交给 `SpanExporter`。
+
+```python
+from matterloop_observability import (
+    BatchingPipeline,
+    CompositeEventPublisher,
+    JsonlExporter,
+    PublisherFailureMode,
+    TraceBuilder,
+)
+
+pipeline = BatchingPipeline(
+    JsonlExporter("traces.jsonl"),
+    flush_at=50,
+    flush_interval=5.0,
+)
+trace_builder = TraceBuilder(pipeline)
+events = CompositeEventPublisher(
+    publishers=(audit_publisher, trace_builder),
+    failure_mode=PublisherFailureMode.RAISE,
+)
+# 应用退出前：pipeline.shutdown()
+```
+
+`JsonlExporter(path)` 每行追加一个带 `type` 字段的 JSON 记录，零额外依赖。`OtelExporter(endpoint)`
+按原父子关系和起止时间把跨度重建到 OTLP/HTTP 后端，评分导出为同一 trace 下名为 `score:<name>`
+的瞬时子跨度。实际 OTel trace/span ID 由 SDK 生成，MatterLoop 的 `run_id`、`span_id` 和父标识分别
+保存在 `matterloop.trace_id`、`matterloop.span_id`、`matterloop.parent_span_id` 属性中。流水线队列有界
+（默认 10000），满时丢新并告警；OTel 需等待根跨度到达以建立公开 API 的父子 context，单运行暂存同样
+默认最多 10000 条，超过后丢新并告警。导出失败重试一次后丢弃，任何异常都不会抛回 Loop 主流程。
+
+`SpanRecord` 是不可变跨度记录：`trace_id`（即产生跨度的 `run_id`）、`span_id`、`parent_span_id`、
+`name`、`observation_type`、`started_at`、`ended_at`、`attributes`、`level` 和 `status_message`。
+`Score` 是不可变评分：`name`、`value`（NUMERIC 归一到 0–1）、`data_type`、`source`、`run_id`、
+`step_id`、`comment`、`evidence` 和 `timestamp`。`score_from_verification` 完成验证结论到 NUMERIC
+评分的映射；`score_from_review` 接受具备 `score`/`summary`/`evidence` 属性的鸭子类型审查结论，
+不要求安装 agents 组件。
+
+## 生产环境：与数据库共用一条实时 OTel Trace
+
+如果应用还要为 SQLAlchemy、HTTP 客户端或消息队列做 OTel 自动埋点，最佳实践是**由应用只创建一个
+`TracerProvider`**：先把它设置为全局 Provider，再把同一实例传给 `OtelExporter`。production preset
+识别到 `OtelExporter` 后，会在 Loop 执行时实时创建 `matterloop.run`、Planner/Executor/Verifier 和
+generation Span；自动 instrumentation 产生的数据库/HTTP Span 会继承当前阶段，成为同一 Trace 的子节点。
+阻塞或暂停前，实时发布器会把当前 `matterloop.run` 的标准 W3C `traceparent`/`tracestate` 写入同一次
+checkpoint CAS。恢复时从这个上下文创建新的真实子 Span：人工等待不计入执行时长，跨进程恢复仍在同一条
+Trace 中，并且后端能找到已导出的真实父节点。checkpoint 只保存 `traceparent`/`tracestate`，不会持久化
+W3C baggage，避免业务元数据被带入存储。`run_id` 只作为业务关联标识和查询属性，不决定 OTel Trace ID。
+
+```bash
+pip install "matterloop-observability[otel]" opentelemetry-instrumentation-sqlalchemy
+```
+
+```python
+import os
+
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+from matterloop_observability import OtelExporter
+from matterloop_presets import build_production_runtime
+
+provider = TracerProvider(Resource.create({"service.name": "my-agent-service"}))
+provider.add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter(endpoint=os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]))
+)
+# 一个进程只能设置一次；必须在初始化框架和自动 instrumentation 前完成。
+trace.set_tracer_provider(provider)
+SQLAlchemyInstrumentor().instrument(engine=engine)
+
+runtime = build_production_runtime(
+    model=model_client,
+    config=production_config,
+    queue_backend=queue_backend,
+    run_repository=run_repository,
+    checkpoint_store=checkpoint_store,
+    audit_publisher=audit_publisher,
+    trace_exporter=OtelExporter(tracer_provider=provider),
+)
+```
+
+应用关闭时先 `await runtime.aclose()`，再由应用对它拥有的 Provider 执行 `provider.force_flush()` 和
+`provider.shutdown()`。不要把 `OtelExporter(endpoint=...)` 自行创建的内部 Provider 用于数据库自动埋点：
+它没有注册成全局 Provider，数据库 Span 会落到另一条 Trace（或被默认 no-op Provider 丢弃）；production
+preset 会为这种配置记录警告，内部 Provider 的关闭也仍由调用方管理。
+
+## 模型调用跨度
+
+```python
+from matterloop_observability import wrap_model_client
+
+client = wrap_model_client(model_client, trace_builder)
+```
+
+`TracedModelClient(client, trace_builder, pipeline)` 可包装任意 `ModelClient`：请求 metadata 含
+`run_id` 时记录一个 generation 跨度，内容包含脱敏后的输入消息、采样参数、输出文本和六项 Token
+用量，父跨度由 `trace_builder` 按 `run_id`/`step_id` 解析，解析不到时挂到运行根跨度；metadata
+缺少 `run_id` 时直接透传，观测永远不会阻断调用。模型异常会记录 ERROR 跨度并原样继续抛出。
+agents 组件的 Planner、Worker、Verifier 和 Reviewer 已在请求 metadata 中写入 `run_id`、`step_id`
+和 `agent`，包装注册进 `ModelRegistry` 的客户端即可自动获得模型跨度；production preset 可通过
+`trace_exporter` 参数一键完成这套装配。传入普通 `SpanExporter` 时使用离线 `TracedModelClient`；传入
+共享 Provider 的 `OtelExporter` 时使用实时 `OpenTelemetryModelClient`，generation 会嵌套在对应阶段下。
+见 [matterloop-presets](../matterloop-presets/README.md)。
 
 ## 扩展方式
 
-同步或异步 callable 可用 `HandlerEventPublisher(handler)` 接入。需要批量、重试或背压时，直接实现
-Core `EventPublisher.publish(event)`，在实现内部管理有界队列和关闭流程。
+同步或异步 callable 可用 `HandlerEventPublisher(handler)` 接入。跨度与评分的批量、重试和背压已由
+`BatchingPipeline` 提供；需要自定义事件去向时，直接实现 Core `EventPublisher.publish(event)`，
+在实现内部管理有界队列和关闭流程。
 
 本包当前面向 Core `LoopEvent`。TeamLoop 事件的数据结构不同，需要单独适配，不能把团队事件发布器
 直接塞给这些处理器。生产拓扑和关闭顺序见[企业集成指南](../docs/enterprise-integration.md)。

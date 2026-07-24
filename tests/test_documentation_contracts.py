@@ -99,6 +99,9 @@ FIELD_CONTRACTS: dict[str, dict[str, tuple[str, ...]]] = {
     "matterloop-memory/README.md": {
         "matterloop_memory": ("MemoryMatch", "MemoryQuery", "MemoryRecord"),
     },
+    "matterloop-observability/README.md": {
+        "matterloop_observability": ("Score", "SpanRecord"),
+    },
     "matterloop-policies/README.md": {
         "matterloop_policies": (
             "ApprovalRule",
@@ -271,6 +274,18 @@ SIGNATURE_CONTRACTS: dict[str, tuple[tuple[str, str, tuple[str, ...]], ...]] = {
         ("matterloop_observability", "CompositeEventPublisher", ("publishers", "failure_mode")),
         ("matterloop_observability", "StructuredLoggingHandler", ("logger", "redactor")),
         ("matterloop_observability", "Redactor", ("extra_fields",)),
+        ("matterloop_observability", "TraceBuilder", ("pipeline",)),
+        (
+            "matterloop_observability",
+            "BatchingPipeline",
+            ("exporter", "flush_at", "flush_interval"),
+        ),
+        ("matterloop_observability", "JsonlExporter", ("path",)),
+        (
+            "matterloop_observability",
+            "TracedModelClient",
+            ("client", "trace_builder", "pipeline"),
+        ),
     ),
     "matterloop-presets/README.md": (
         ("matterloop_presets", "build_minimal_runtime", ("model", "config")),
@@ -292,6 +307,7 @@ SIGNATURE_CONTRACTS: dict[str, tuple[tuple[str, str, tuple[str, ...]], ...]] = {
                 "audit_publisher",
                 "event_reader",
                 "approval_gate",
+                "trace_exporter",
             ),
         ),
     ),

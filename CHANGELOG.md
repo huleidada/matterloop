@@ -7,6 +7,32 @@
 
 ## [Unreleased]
 
+### Added
+
+- Observability 新增树形 tracing 与评分：`TraceBuilder` 把生命周期事件流重建为跨度树，
+  `BatchingPipeline` 聚批导出 `SpanRecord` 与 `Score`，提供 JSONL 与 OTLP/HTTP 两种导出器；
+  `TracedModelClient` 包装模型客户端自动记录 generation 跨度。
+- production preset 新增可选 `trace_exporter` 参数，一键把 TraceBuilder 挂入审计事件管线并包装模型
+  客户端，导出流水线随 runtime 关闭自动排空。
+- Core 新增公开生命周期事件 `LoopEventType.COMPLETION_EVALUATION_COMPLETED`，在整体验收决策
+  （通过/重规划/请求人工）产生后发出，订阅者可精确获知评估结束时机。
+- Observability 新增实时 OTel 追踪：`OpenTelemetryTracePublisher` 在 Loop 执行期间维护真实
+  Span 上下文，`OpenTelemetryModelClient` 嵌套记录 generation，数据库/HTTP 自动
+  instrumentation 可进入同一条 Trace；阻塞/暂停时将 W3C `traceparent`/`tracestate` 与 checkpoint
+  同次 CAS 保存，恢复后创建真实子 Span，`run_id` 仅用于业务关联。
+- Core 新增 `CheckpointPreparer` 协议与 `LoopContext.propagation_context` 字段：事件发布器可在
+  checkpoint CAS 保存前写入可持久化的关联信息（如 W3C 传播上下文），`CompositeEventPublisher`
+  会转发该钩子。
+
+### Changed
+
+- Checkpoint 当前结构新增 `propagation_context`，不再携带 `schema_version`；Codec 只接受顶层为
+  `context` 的完整结构。
+
+### Deprecated
+
+- `TracingHandler` 标记废弃，孤立短跨度由 `TraceBuilder` 的树形 trace 取代。
+
 ## [0.1.2] - 2026-07-23
 
 ### Added

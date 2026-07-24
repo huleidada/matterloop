@@ -95,6 +95,7 @@ runtime = build_production_runtime(
     audit_publisher=audit_publisher,
     event_reader=event_reader,
     approval_gate=approval_gate,
+    trace_exporter=JsonlExporter("traces.jsonl"),
 )
 ```
 
@@ -103,6 +104,18 @@ the Builder raises `PresetConfigurationError`; it never falls back to an in-memo
 The returned `ProductionRuntime` contains the control-plane `queue_runtime` and execution-plane
 `worker_runtime`. The deployment remains responsible for leases, acknowledgements, lease renewal,
 dead letters, and the Worker loop.
+
+`trace_exporter` is optional. With a regular `SpanExporter` such as `JsonlExporter`, the preset
+attaches a `TraceBuilder` to the audit event pipeline, wraps the model client in a
+`TracedModelClient`, and drains the export pipeline on `ProductionRuntime.aclose()`. With an
+`OtelExporter` given a shared `TracerProvider`, the preset instead uses real-time OTel Context:
+`matterloop.run`, each execution phase, generation, and SQLAlchemy/HTTP auto-instrumentation spans
+are in the same trace. Provider creation, global registration, and shutdown remain the
+application's responsibility; see the [database configuration](../matterloop-observability/README.en.md#production-one-live-otel-trace-with-the-database).
+A blocked or paused Loop persists W3C `traceparent`/`tracestate` in the same checkpoint CAS; resumption
+creates a real child Span without deriving IDs from `run_id` or inventing a synthetic parent. W3C baggage
+is not written to the checkpoint.
+By default no tracing resources are created and the event pipeline behaves exactly as before.
 
 ## Configuration reference
 

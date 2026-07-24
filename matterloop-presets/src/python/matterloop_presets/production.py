@@ -1,16 +1,48 @@
 """显式基础设施依赖的生产队列与 worker 预设。"""
 
+import asyncio
+import logging
+
 from matterloop_core import ApprovalGate, CheckpointStore, EventPublisher
 from matterloop_models import ModelClient
-from matterloop_observability import CompositeEventPublisher, PublisherFailureMode
+from matterloop_observability import (
+    BatchingPipeline,
+    CompositeEventPublisher,
+    OpenTelemetryTracePublisher,
+    OtelExporter,
+    PublisherFailureMode,
+    SpanExporter,
+    TraceBuilder,
+    wrap_model_client,
+    wrap_otel_model_client,
+)
 from matterloop_policies import AllowAllApproval
-from matterloop_runtime import QueueBackend, QueueRuntime, RunEventReader, RunRepository
+from matterloop_runtime import (
+    AsyncClosable,
+    QueueBackend,
+    QueueRuntime,
+    RunEventReader,
+    RunRepository,
+)
 from matterloop_tools import ToolRegistry
 
 from matterloop_presets._assembly import _assemble_runtime
 from matterloop_presets.config import ProductionPresetConfig
 from matterloop_presets.errors import PresetConfigurationError
 from matterloop_presets.runtime import ProductionLocalRuntime, ProductionRuntime
+
+logger = logging.getLogger(__name__)
+
+
+class _PipelineShutdownResource:
+    """把同步导出流水线的关闭适配为运行门面的异步资源协议。"""
+
+    def __init__(self, pipeline: BatchingPipeline) -> None:
+        self._pipeline = pipeline
+
+    async def aclose(self) -> None:
+        """在线程中排空并停止导出流水线，避免阻塞事件循环。"""
+        await asyncio.to_thread(self._pipeline.shutdown)
 
 
 def build_production_runtime(
@@ -23,6 +55,7 @@ def build_production_runtime(
     audit_publisher: EventPublisher | None = None,
     event_reader: RunEventReader | None = None,
     approval_gate: ApprovalGate | None = None,
+    trace_exporter: SpanExporter | None = None,
 ) -> ProductionRuntime:
     """构建显式基础设施依赖的生产队列与 worker 组合运行时。
 
@@ -38,6 +71,9 @@ def build_production_runtime(
         audit_publisher: 显式审计事件发布器，发布失败会抛出。
         event_reader: 可选审计事件读取器。
         approval_gate: 可选生产审批实现。
+        trace_exporter: 可选跨度与评分导出器。传入 OtelExporter 时创建实时 OTel 上下文，
+            让数据库等自动 instrumentation 产生的 Span 进入同一条 Agent Trace；其他导出器
+            使用 TraceBuilder 和 TracedModelClient 重建关闭后的树形记录。
 
     Returns:
         分离队列客户端与实际 Loop worker 的生产运行时。
@@ -66,17 +102,38 @@ def build_production_runtime(
 
     actual_config = config or ProductionPresetConfig()
     tools = ToolRegistry()
+    publishers: tuple[EventPublisher, ...] = (audit_publisher,)
+    extra_resources: tuple[AsyncClosable, ...] = ()
+    actual_model = model
+    if isinstance(trace_exporter, OtelExporter):
+        if trace_exporter.owns_tracer_provider:
+            logger.warning(
+                "OtelExporter(endpoint=...) 的内部 TracerProvider 未注册为全局 Provider；"
+                "数据库和 HTTP 自动 instrumentation 不会进入 MatterLoop Trace，且调用方需管理其关闭"
+            )
+        publishers = (
+            audit_publisher,
+            OpenTelemetryTracePublisher(trace_exporter.tracer_provider),
+        )
+        actual_model = wrap_otel_model_client(model, trace_exporter.tracer_provider)
+    elif trace_exporter is not None:
+        pipeline = BatchingPipeline(trace_exporter)
+        trace_builder = TraceBuilder(pipeline)
+        publishers = (audit_publisher, trace_builder)
+        actual_model = wrap_model_client(model, trace_builder)
+        extra_resources = (_PipelineShutdownResource(pipeline),)
     worker_runtime = _assemble_runtime(
-        model=model,
+        model=actual_model,
         config=actual_config,
         checkpoint_store=checkpoint_store,
         events=CompositeEventPublisher(
-            (audit_publisher,),
+            publishers,
             failure_mode=PublisherFailureMode.RAISE,
         ),
         approval_gate=approval_gate or AllowAllApproval(),
         tool_registries={"default": tools},
         executor_tools={"default": ()},
+        extra_resources=extra_resources,
     )
     actual_event_reader = event_reader
     if actual_event_reader is None and isinstance(audit_publisher, RunEventReader):
@@ -99,6 +156,7 @@ def build_production_local_runtime(
     audit_publisher: EventPublisher | None = None,
     event_reader: RunEventReader | None = None,
     approval_gate: ApprovalGate | None = None,
+    trace_exporter: SpanExporter | None = None,
 ) -> ProductionLocalRuntime:
     """构建同步生产 worker，并通过属性保留异步队列客户端。
 
@@ -111,6 +169,7 @@ def build_production_local_runtime(
         audit_publisher: 显式审计事件发布器。
         event_reader: 可选审计事件读取器。
         approval_gate: 可选生产审批实现。
+        trace_exporter: 可选跨度与评分导出器，语义与异步构建函数一致。
 
     Returns:
         同步 worker 门面与异步队列客户端的组合对象。
@@ -124,6 +183,7 @@ def build_production_local_runtime(
         audit_publisher=audit_publisher,
         event_reader=event_reader,
         approval_gate=approval_gate,
+        trace_exporter=trace_exporter,
     )
     return ProductionLocalRuntime(runtime)
 

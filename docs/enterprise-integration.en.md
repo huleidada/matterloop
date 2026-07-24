@@ -214,8 +214,23 @@ detect and compensate for sequence gaps. Replacing only the Publisher is insuffi
 filters sensitive fields by mapping key only. It does not scan free text, model output, or exception tracebacks. Logs
 should usually retain only run/task/step identifiers, tenant, revision/version, state, stop reason, and usage counts.
 
-The application configures OpenTelemetry Providers, Exporters, sampling, and resource attributes. Team events carry a
-complete Snapshot; evaluate their size, cardinality, and sensitive fields before writing them to a SIEM or Trace.
+The application should configure OpenTelemetry Providers, Exporters, sampling, and resource
+attributes centrally. When database, HTTP, or message-client auto-instrumentation is also enabled,
+create one shared `TracerProvider`, register it with `trace.set_tracer_provider(provider)`, then
+pass it to the production preset through `OtelExporter(tracer_provider=provider)`. MatterLoop runs,
+model generations, and database/HTTP spans will then be in one live trace. Do not use the internal
+Provider created by `OtelExporter(endpoint=...)` for cross-component tracing. Shut down in this
+order: `runtime.aclose()`, `provider.force_flush()`, then `provider.shutdown()`. Team events carry
+a complete Snapshot; evaluate their size, cardinality, and sensitive fields before writing them to a
+SIEM or Trace.
+
+For offline tree-shaped traces, use `TraceBuilder` with `BatchingPipeline` to rebuild the event
+stream into a span tree and extract verification scores, and wrap model clients in
+`TracedModelClient` to record generation spans automatically. The production preset performs the
+same assembly for a regular `trace_exporter`, and the export pipeline drains when the runtime
+closes. Use the shared Provider approach above when auto-instrumentation needs real-time context.
+See
+[matterloop-observability](../matterloop-observability/README.en.md) for assembly details.
 
 ## Failure drills
 

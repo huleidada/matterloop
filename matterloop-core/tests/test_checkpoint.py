@@ -1,4 +1,4 @@
-"""版本化 Loop 检查点编解码测试。"""
+"""Loop 检查点编解码测试。"""
 
 import json
 from datetime import datetime, timezone
@@ -97,12 +97,16 @@ def test_checkpoint_round_trip_preserves_resume_state() -> None:
         event_sequence=9,
         revision=8,
         active_elapsed_seconds=1.25,
+        propagation_context={
+            "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+            "tracestate": "vendor=value",
+        },
         started_at=now,
         updated_at=now,
     )
 
     payload = codec.dumps(context)
-    assert json.loads(payload)["schema_version"] == 2
+    assert set(json.loads(payload)) == {"context"}
 
     restored = codec.loads(payload)
     assert restored.run_id == context.run_id
@@ -121,13 +125,14 @@ def test_checkpoint_round_trip_preserves_resume_state() -> None:
     assert restored.event_sequence == 9
     assert restored.revision == 8
     assert restored.active_elapsed_seconds == 1.25
+    assert restored.propagation_context == context.propagation_context
 
 
-def test_checkpoint_rejects_unknown_schema_version() -> None:
-    """未知版本不得按当前结构猜测解析。"""
+def test_checkpoint_rejects_versioned_payload() -> None:
+    """未发布的格式不保留 schema_version 兼容入口。"""
     codec = LoopCheckpointCodec()
 
-    with pytest.raises(CheckpointSchemaError, match="unsupported"):
+    with pytest.raises(CheckpointSchemaError, match="only the current"):
         codec.loads('{"schema_version":1,"context":{}}')
 
 
