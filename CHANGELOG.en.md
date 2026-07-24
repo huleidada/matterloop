@@ -7,6 +7,18 @@ version entry covers the complete component set instead of maintaining separate 
 
 ## [Unreleased]
 
+### Added
+
+- Added tree-shaped tracing and scoring to observability: `TraceBuilder` rebuilds the lifecycle event
+  stream into a span tree, `BatchingPipeline` batches `SpanRecord` and `Score` exports to JSONL or OTLP/HTTP
+  exporters, and `TracedModelClient` wraps a model client to record generation spans automatically.
+- Added an optional `trace_exporter` parameter to the production preset that attaches the TraceBuilder to the
+  audit event pipeline and wraps the model client, draining the export pipeline when the runtime closes.
+
+### Deprecated
+
+- Deprecated `TracingHandler`; its isolated short spans are superseded by the tree traces from `TraceBuilder`.
+
 ## [0.1.1] - 2026-07-21
 
 ### Added

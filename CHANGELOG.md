@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- Observability 新增树形 tracing 与评分：`TraceBuilder` 把生命周期事件流重建为跨度树，
+  `BatchingPipeline` 聚批导出 `SpanRecord` 与 `Score`，提供 JSONL 与 OTLP/HTTP 两种导出器；
+  `TracedModelClient` 包装模型客户端自动记录 generation 跨度。
+- production preset 新增可选 `trace_exporter` 参数，一键把 TraceBuilder 挂入审计事件管线并包装模型
+  客户端，导出流水线随 runtime 关闭自动排空。
+
+### Deprecated
+
+- `TracingHandler` 标记废弃，孤立短跨度由 `TraceBuilder` 的树形 trace 取代。
+
 ## [0.1.1] - 2026-07-21
 
 ### Added

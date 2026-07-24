@@ -95,6 +95,7 @@ runtime = build_production_runtime(
     audit_publisher=audit_publisher,
     event_reader=event_reader,
     approval_gate=approval_gate,
+    trace_exporter=JsonlExporter("traces.jsonl"),
 )
 ```
 
@@ -103,6 +104,11 @@ the Builder raises `PresetConfigurationError`; it never falls back to an in-memo
 The returned `ProductionRuntime` contains the control-plane `queue_runtime` and execution-plane
 `worker_runtime`. The deployment remains responsible for leases, acknowledgements, lease renewal,
 dead letters, and the Worker loop.
+
+`trace_exporter` is optional: when a `SpanExporter` (such as `JsonlExporter` or `OtelExporter`) is
+provided, the preset attaches a `TraceBuilder` to the audit event pipeline, wraps the model client
+in a `TracedModelClient`, and drains the export pipeline on `ProductionRuntime.aclose()`. By
+default no tracing resources are created and the event pipeline behaves exactly as before.
 
 ## Configuration reference
 

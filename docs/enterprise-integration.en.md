@@ -214,8 +214,15 @@ detect and compensate for sequence gaps. Replacing only the Publisher is insuffi
 filters sensitive fields by mapping key only. It does not scan free text, model output, or exception tracebacks. Logs
 should usually retain only run/task/step identifiers, tenant, revision/version, state, stop reason, and usage counts.
 
-The application configures OpenTelemetry Providers, Exporters, sampling, and resource attributes. Team events carry a
-complete Snapshot; evaluate their size, cardinality, and sensitive fields before writing them to a SIEM or Trace.
+Except for `OtelExporter`, which ships its own SDK and OTLP/HTTP exporter, the application configures
+OpenTelemetry Providers, Exporters, sampling, and resource attributes. Team events carry a complete
+Snapshot; evaluate their size, cardinality, and sensitive fields before writing them to a SIEM or Trace.
+
+For tree-shaped traces, use `TraceBuilder` with `BatchingPipeline` to rebuild the event stream into a
+span tree and extract verification scores, and wrap model clients in `TracedModelClient` to record
+generation spans automatically. The production preset performs the same assembly when given a
+`trace_exporter`, and the export pipeline drains when the runtime closes. See
+[matterloop-observability](../matterloop-observability/README.en.md) for assembly details.
 
 ## Failure drills
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
@@ -28,6 +28,8 @@ from matterloop_models import (
     ToolCall,
 )
 from matterloop_models.providers import OpenAIModelClient, OpenAIModelConfig
+from matterloop_observability import Score, SpanRecord
+from matterloop_observability.pipeline import ExportItem
 from matterloop_presets import (
     CodingPresetConfig,
     MinimalPresetConfig,
@@ -373,6 +375,67 @@ def test_production_runtime_requires_and_uses_explicit_infrastructure() -> None:
             assert events
         finally:
             await runtime.aclose()
+
+    asyncio.run(scenario())
+
+
+class _CollectingSpanExporter:
+    """收集生产预设 tracing 装配导出批次的导出器。"""
+
+    def __init__(self) -> None:
+        self.items: list[ExportItem] = []
+
+    def export(self, batch: Sequence[ExportItem]) -> None:
+        """记录一批跨度与评分。"""
+        self.items.extend(batch)
+
+
+def test_production_runtime_traces_spans_when_exporter_provided() -> None:
+    """提供 trace_exporter 时事件流应产生跨度树，并在关闭运行时时排空。"""
+
+    async def scenario() -> None:
+        exporter = _CollectingSpanExporter()
+        runtime = build_production_runtime(
+            _simple_success_model(),
+            queue_backend=InMemoryQueueBackend(),
+            run_repository=InMemoryRunRepository(),
+            checkpoint_store=InMemoryCheckpointStore(),
+            audit_publisher=_NoopPublisher(),
+            trace_exporter=exporter,
+        )
+        result = await runtime.worker_runtime.run(LoopRequest("worker"), run_id="worker-trace-1")
+        # 默认批量阈值不会在一次运行内触发导出，关闭运行时必须负责排空流水线。
+        await runtime.aclose()
+
+        assert result.status is LoopStatus.COMPLETED
+        spans = [item for item in exporter.items if isinstance(item, SpanRecord)]
+        assert spans
+        assert {span.trace_id for span in spans} == {"worker-trace-1"}
+        assert any(span.parent_span_id is None for span in spans)
+        assert any(span.observation_type == "generation" for span in spans)
+        scores = [item for item in exporter.items if isinstance(item, Score)]
+        assert scores
+        assert all(score.name == "verification" for score in scores)
+
+    asyncio.run(scenario())
+
+
+def test_production_runtime_without_exporter_keeps_event_pipeline_unchanged() -> None:
+    """默认不装 tracing 时生产预设不应产生跨度或引入额外线程资源。"""
+
+    async def scenario() -> None:
+        audit = _NoopPublisher()
+        runtime = build_production_runtime(
+            _simple_success_model(),
+            queue_backend=InMemoryQueueBackend(),
+            run_repository=InMemoryRunRepository(),
+            checkpoint_store=InMemoryCheckpointStore(),
+            audit_publisher=audit,
+        )
+        result = await runtime.worker_runtime.run(LoopRequest("worker"), run_id="worker-plain-1")
+        await runtime.aclose()
+
+        assert result.status is LoopStatus.COMPLETED
 
     asyncio.run(scenario())
 

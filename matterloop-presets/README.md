@@ -88,12 +88,18 @@ runtime = build_production_runtime(
     audit_publisher=audit_publisher,
     event_reader=event_reader,
     approval_gate=approval_gate,
+    trace_exporter=JsonlExporter("traces.jsonl"),
 )
 ```
 
 `queue_backend`、`run_repository`、`checkpoint_store` 和 `audit_publisher` 缺一即抛
 `PresetConfigurationError`，不会回退到内存实现。返回的 `ProductionRuntime` 包含控制面的
 `queue_runtime` 和执行面的 `worker_runtime`；租约、ack、续租、死信和 Worker 循环仍由部署方负责。
+
+`trace_exporter` 是可选的：传入 `SpanExporter`（如 `JsonlExporter` 或 `OtelExporter`）时，preset
+会把 `TraceBuilder` 挂入审计事件管线、把模型客户端包装为 `TracedModelClient`，并在
+`ProductionRuntime.aclose()` 时自动排空导出流水线；缺省不创建任何 tracing 资源，事件管线行为
+与之前完全一致。
 
 ## 配置速查
 

@@ -34,7 +34,11 @@ Repository = "https://github.com/huleidada/matterloop"
 Issues = "https://github.com/huleidada/matterloop/issues"
 
 [project.optional-dependencies]
-otel = ["opentelemetry-api>=1.25,<2"]
+otel = [
+    "opentelemetry-api>=1.25,<2",
+    "opentelemetry-sdk>=1.25,<2",
+    "opentelemetry-exporter-otlp-proto-http>=1.25,<2",
+]
 dev = ["mypy>=1.10", "pytest>=8.0", "ruff>=0.5"]
 
 [tool.hatch.build.targets.wheel]
