@@ -1,7 +1,5 @@
 """MatterLoop 可观测性组件公共 API。"""
 
-from matterloop_observability.exporter import JsonlExporter, OtelExporter, SpanExporter
-from matterloop_observability.live_tracing import OpenTelemetryTracePublisher
 from matterloop_observability.bus import (
     EventBus,
     EventPredicate,
@@ -10,6 +8,7 @@ from matterloop_observability.bus import (
     Subscription,
 )
 from matterloop_observability.cost import CostRecord, CostSummary, CostTracker, CostTrackingHandler
+from matterloop_observability.exporter import JsonlExporter, OtelExporter, SpanExporter
 from matterloop_observability.handlers import (
     RuntimeSignal,
     SignalBus,
@@ -21,6 +20,7 @@ from matterloop_observability.handlers import (
     on_task_created,
     on_verification_failed,
 )
+from matterloop_observability.live_tracing import OpenTelemetryTracePublisher
 from matterloop_observability.logging import StructuredLoggingHandler
 from matterloop_observability.metrics import MetricsHandler, OpenTelemetryMetricsHandler
 from matterloop_observability.model_client import (
@@ -36,10 +36,10 @@ from matterloop_observability.publisher import (
     PublisherFailureMode,
 )
 from matterloop_observability.redaction import Redactor
+from matterloop_observability.router import EventRouter, EventRule
 from matterloop_observability.scores import Score, score_from_review, score_from_verification
 from matterloop_observability.spans import SpanRecord
 from matterloop_observability.trace_builder import TraceBuilder
-from matterloop_observability.router import EventRouter, EventRule
 from matterloop_observability.tracing import TracingHandler
 
 __all__ = [
@@ -55,8 +55,8 @@ __all__ = [
     "EventRule",
     "EventStore",
     "HandlerEventPublisher",
-    "JsonlExporter",
     "InMemoryEventStore",
+    "JsonlExporter",
     "MetricsHandler",
     "OpenTelemetryMetricsHandler",
     "OpenTelemetryModelClient",
@@ -64,10 +64,15 @@ __all__ = [
     "OtelExporter",
     "PublisherFailureMode",
     "Redactor",
+    "RuntimeSignal",
     "Score",
+    "SignalBus",
+    "SignalHandler",
+    "SignalSubscription",
     "SpanExporter",
     "SpanRecord",
     "StructuredLoggingHandler",
+    "Subscription",
     "TraceBuilder",
     "TracedModelClient",
     "TracingHandler",
@@ -75,13 +80,6 @@ __all__ = [
     "score_from_verification",
     "wrap_model_client",
     "wrap_otel_model_client",
-    "RuntimeSignal",
-    "SignalBus",
-    "SignalHandler",
-    "SignalSubscription",
-    "StructuredLoggingHandler",
-    "Subscription",
-    "TracingHandler",
     "on_execution_completed",
     "on_human_interaction_requested",
     "on_plan_created",
