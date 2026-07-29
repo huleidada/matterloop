@@ -2,7 +2,11 @@ name: ci
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
 
 jobs:
   quality:
@@ -29,7 +33,14 @@ jobs:
       - run: uv run coverage report
 
   build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    concurrency:
+      group: package-main
+      cancel-in-progress: false
+    environment:
+      name: package-main
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -96,3 +107,10 @@ jobs:
           uv pip install --python .wheel-test-mcp/bin/python --find-links wheelhouse --constraint scripts/wheel-constraints.txt "${tools_wheel}[mcp]"
           uv pip check --python .wheel-test-mcp/bin/python
           .wheel-test-mcp/bin/python -c "import matterloop_tools.mcp, mcp.client.session, mcp.types"
+      - name: Upload all distributions as one artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-distributions-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
