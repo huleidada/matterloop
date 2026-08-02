@@ -1100,7 +1100,7 @@ wheels = [
 
 [[package]]
 name = "matterloop-agents"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-agents" }
 dependencies = [
     { name = "matterloop-core" },
@@ -1134,7 +1134,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "matterloop-core"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-core" }
 
 [package.optional-dependencies]
@@ -1154,7 +1154,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "matterloop-integration-celery"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-integration-celery" }
 dependencies = [
     { name = "celery" },
@@ -1182,7 +1182,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "matterloop-integration-fastapi"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-integration-fastapi" }
 dependencies = [
     { name = "fastapi" },
@@ -1214,7 +1214,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "matterloop-integration-redis"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-integration-redis" }
 dependencies = [
     { name = "matterloop-core" },
@@ -1242,7 +1242,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "matterloop-memory"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-memory" }
 dependencies = [
     { name = "matterloop-core" },
@@ -1268,7 +1268,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "matterloop-models"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-models" }
 
 [package.optional-dependencies]
@@ -1292,7 +1292,7 @@ provides-extras = ["openai", "dev"]
 
 [[package]]
 name = "matterloop-observability"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-observability" }
 dependencies = [
     { name = "matterloop-core" },
@@ -1324,7 +1324,7 @@ provides-extras = ["otel", "dev"]
 
 [[package]]
 name = "matterloop-policies"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-policies" }
 dependencies = [
     { name = "matterloop-core" },
@@ -1352,7 +1352,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "matterloop-presets"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-presets" }
 dependencies = [
     { name = "matterloop-agents" },
@@ -1390,7 +1390,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "matterloop-runtime"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-runtime" }
 dependencies = [
     { name = "matterloop-core" },
@@ -1418,7 +1418,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "matterloop-tools"
-version = "0.2.2"
+version = "0.2.3"
 source = { editable = "matterloop-tools" }
 dependencies = [
     { name = "httpx" },
@@ -1450,7 +1450,7 @@ provides-extras = ["mcp", "dev"]
 
 [[package]]
 name = "matterloop-workspace"
-version = "0.2.2"
+version = "0.2.3"
 source = { virtual = "." }
 dependencies = [
     { name = "matterloop-agents" },

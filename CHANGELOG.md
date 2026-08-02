@@ -7,6 +7,13 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-03
+
+### Fixed
+
+- Runtime 语义压缩不再要求模型回传内部 Context 条目 ID；来源 ID 改由运行时根据原始输入确定性写入，
+  避免模型漏写或改写 ID 时在硬阈值处触发 `context compaction failed`。
+
 ## [0.2.2] - 2026-07-29
 
 ### Added
@@ -124,7 +131,8 @@
 - 模型 continuation/reasoning 不进入公开结果，日志与事件支持敏感字段脱敏。
 - Shell 工具使用 argv 调用，文件与 HTTP 工具提供路径、协议、host 和响应大小边界。
 
-[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/huleidada/matterloop/releases/tag/v0.2.3
 [0.2.2]: https://github.com/huleidada/matterloop/releases/tag/v0.2.2
 [0.2.1]: https://github.com/huleidada/matterloop/releases/tag/v0.2.1
 [0.2.0]: https://github.com/huleidada/matterloop/releases/tag/v0.2.0
