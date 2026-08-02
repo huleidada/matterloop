@@ -7,6 +7,14 @@ version entry covers the complete component set instead of maintaining separate 
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-03
+
+### Fixed
+
+- Runtime semantic compaction no longer asks the model to echo internal context item IDs. The
+  runtime now writes trusted source IDs from the original input, preventing a hard-threshold
+  `context compaction failed` error when a model omits or rewrites an ID.
+
 ## [0.2.2] - 2026-07-29
 
 ### Added
@@ -144,7 +152,8 @@ version entry covers the complete component set instead of maintaining separate 
 - Shell tools execute argv directly, while filesystem and HTTP tools enforce path, protocol, host, and response-size
   boundaries.
 
-[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/huleidada/matterloop/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/huleidada/matterloop/releases/tag/v0.2.3
 [0.2.2]: https://github.com/huleidada/matterloop/releases/tag/v0.2.2
 [0.2.1]: https://github.com/huleidada/matterloop/releases/tag/v0.2.1
 [0.2.0]: https://github.com/huleidada/matterloop/releases/tag/v0.2.0

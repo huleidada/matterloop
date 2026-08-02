@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 
 import pytest
@@ -36,6 +37,7 @@ from matterloop_runtime import (
     InMemoryContextBlobStore,
     InMemoryContextStore,
     LocalContextEventPublisher,
+    SemanticCompactor,
 )
 
 
@@ -116,6 +118,55 @@ class NativeRecordingModel(RecordingModel):
                 native=True,
             ),
         )
+
+
+def test_semantic_compactor_uses_trusted_source_ids() -> None:
+    async def scenario() -> None:
+        source = ModelMessageItem(
+            MessageRole.USER,
+            "historical context",
+            item_id="source-item",
+        )
+        model = RecordingModel(
+            [
+                ModelResponse(
+                    output_text=json.dumps(
+                        {
+                            "objective": "完成任务",
+                            "constraints": [],
+                            "completed": [],
+                            "decisions": [],
+                            "failures": [],
+                            "current_state": "执行中",
+                            "pending": [],
+                            "artifacts": [],
+                            "facts": [],
+                            "source_item_ids": ["model-generated-wrong-id"],
+                        }
+                    )
+                )
+            ]
+        )
+        compactor = SemanticCompactor(
+            model,
+            provider="test",
+            model_name="test-model",
+        )
+
+        compacted = await compactor.compact(
+            (source,),
+            scope=ModelContextScope("run-source-ids", "worker"),
+            target_tokens=100,
+        )
+
+        summary = json.loads(compacted[0].payload)
+        assert summary["source_item_ids"] == ["source-item"]
+        assert compacted[0].metadata["source_item_ids"] == ("source-item",)
+        schema = model.requests[0].response_schema
+        assert schema is not None
+        assert "source_item_ids" not in schema["properties"]
+
+    asyncio.run(scenario())
 
 
 def test_managed_client_persists_canonical_tool_conversation() -> None:

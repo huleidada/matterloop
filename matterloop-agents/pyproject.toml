@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matterloop-agents"
-version = "0.2.2"
+version = "0.2.3"
 description = "Model agents and DAG-based multi-agent collaboration components for MatterLoop"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,11 +26,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "matterloop-core>=0.2.2,<0.3.0",
-    "matterloop-memory>=0.2.2,<0.3.0",
-    "matterloop-models>=0.2.2,<0.3.0",
-    "matterloop-runtime>=0.2.2,<0.3.0",
-    "matterloop-tools>=0.2.2,<0.3.0",
+    "matterloop-core>=0.2.3,<0.3.0",
+    "matterloop-memory>=0.2.3,<0.3.0",
+    "matterloop-models>=0.2.3,<0.3.0",
+    "matterloop-runtime>=0.2.3,<0.3.0",
+    "matterloop-tools>=0.2.3,<0.3.0",
 ]
 
 [project.urls]

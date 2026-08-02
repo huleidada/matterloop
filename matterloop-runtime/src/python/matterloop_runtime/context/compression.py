@@ -102,7 +102,6 @@ class SemanticCompactor:
             "pending": {"type": "array", "items": {"type": "string"}},
             "artifacts": {"type": "array", "items": {"type": "string"}},
             "facts": {"type": "array", "items": {"type": "string"}},
-            "source_item_ids": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
             "objective",
@@ -114,7 +113,6 @@ class SemanticCompactor:
             "pending",
             "artifacts",
             "facts",
-            "source_item_ids",
         ],
     }
 
@@ -152,7 +150,7 @@ class SemanticCompactor:
         scope: ModelContextScope,
         target_tokens: int,
     ) -> tuple[ModelInputItem, ...]:
-        """请求严格 JSON 摘要并验证其覆盖全部来源 ID。"""
+        """请求严格 JSON 摘要，并由运行时写入可信来源 ID。"""
         source_ids = tuple(item.item_id for item in items)
         request = ModelRequest(
             messages=(
@@ -186,9 +184,7 @@ class SemanticCompactor:
             raise ValueError("semantic compactor returned invalid JSON") from exc
         if not isinstance(summary, dict):
             raise ValueError("semantic compactor summary must be an object")
-        returned_ids = summary.get("source_item_ids")
-        if not isinstance(returned_ids, list) or set(returned_ids) != set(source_ids):
-            raise ValueError("semantic compactor did not cover every source item")
+        summary["source_item_ids"] = list(source_ids)
         payload = json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return (
             ModelCompactionItem(
