@@ -9,6 +9,11 @@ from collections.abc import Iterator, Mapping
 from typing import Protocol
 
 from matterloop_tools.base import ToolContext, ToolEffect, ToolResult, ToolSpec
+from matterloop_tools.capabilities import (
+    ToolDescriptor,
+    ToolOrigin,
+    capability_from_annotations,
+)
 from matterloop_tools.mcp.models import McpCallResult, McpContent, McpContentKind, McpToolDefinition
 
 _UNSAFE_TOOL_CHARACTERS = re.compile(r"[^A-Za-z0-9_-]+")
@@ -114,6 +119,7 @@ class McpToolAdapter:
         namespace: str,
         definition: McpToolDefinition,
         *,
+        origin: ToolOrigin = ToolOrigin.LOCAL_MCP,
         max_result_characters: int,
         max_content_blocks: int = 256,
         catalog_token: str | None = None,
@@ -150,11 +156,24 @@ class McpToolAdapter:
             definition.input_schema,
             default_effect=ToolEffect.UNKNOWN,
         )
+        self._descriptor = ToolDescriptor(
+            tool_ref=f"{origin.value}:{server_name}:{definition.name}",
+            origin=origin,
+            spec=self._spec,
+            capability=capability_from_annotations(definition.annotations),
+            output_schema=definition.output_schema,
+            annotations=definition.annotations,
+        )
 
     @property
     def spec(self) -> ToolSpec:
         """返回带安全命名空间的 MatterLoop 工具定义。"""
         return self._spec
+
+    @property
+    def descriptor(self) -> ToolDescriptor:
+        """返回 MCP 工具的来源、能力和输出契约。"""
+        return self._descriptor
 
     async def invoke(
         self,
@@ -191,6 +210,7 @@ class McpToolAdapter:
                 "content_blocks": len(result.content),
                 "truncated": truncated,
             },
+            structured_content=result.structured_content,
         )
 
     @classmethod

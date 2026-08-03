@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "matterloop-tools"
-version = "0.2.3"
+version = "0.2.4"
 description = "Permission-aware tools for MatterLoop agents"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -71,7 +71,7 @@ class Tool(Protocol):
 - `ToolContext` carries authorization, correlation data, and an access scope that the business
   authorizer cannot elevate. `metadata` accepts only JSON-compatible values and is recursively
   snapshotted before invocation.
-- `ToolResult(content, is_error, metadata)` returns text output and safe diagnostics.
+- `ToolResult(content, is_error, metadata, structured_content)` returns text output, structured output, and safe diagnostics.
 
 | DTO | Field | Type | Required / default | Behavior and security |
 | --- | --- | --- | --- | --- |
@@ -101,6 +101,22 @@ lookup and authorization, so success, missing-tool, and denial paths share one b
 The Schema is for discovery; it does not mean that the registry automatically evaluates JSON Schema.
 Every custom tool must validate all arguments locally. Provider-side strict tools do not replace
 authorization.
+
+### Capability contracts and local decorators
+
+`CapabilitySpec` describes a tool with a stable `capability_id`, operations, business entities, result kind, and
+completion evidence. `ToolDescriptor` also preserves the `local`, `local_mcp`, or `database_mcp` origin and a global
+tool reference. `ToolRegistry.descriptors()` returns the unified catalog, while `select_by_capability()` narrows the
+catalog by capability before tools are exposed to a model.
+
+A local Python function can be adapted into a `Tool` with lowercase `@tool(...)` and can declare its capability with
+`@capability(...)`. The public `Tool` name remains the structural protocol and is not also used as a decorator.
+`@mcp_tool(...)` only creates MatterLoop namespaced annotations for a local MCP function; it does not create an MCP
+Server or take ownership of its transport or Session.
+
+An MCP tool can declare the same contract in the `matterloop/capability` annotations field. After discovery,
+`McpToolAdapter` preserves that contract, the output Schema, origin, and structured result, so local tools and
+database-backed MCP tools pass through the same capability catalog and invocation entry point.
 
 `register(tool, replace=False)`, `replace(name, tool)`, `unregister(name)`, and `aclose()` manage the
 lifecycle. A new implementation replaces the old one only after it starts successfully. Calls already
@@ -177,7 +193,7 @@ tools so an old Schema cannot invoke a new service.
 <summary>MCP data structure and limit reference</summary>
 
 - `McpLimits(request_timeout_seconds, initialize_timeout_seconds, close_timeout_seconds, max_pages, max_items, max_content_blocks, max_result_characters)`: defaults to 30/15/10 seconds, 20 pages, 1,000 items, 256 content blocks, and 200,000 characters.
-- `McpServerConfig(name, tool_namespace, limits, initialize_on_start, owns_session)`: service identity, local tool namespace, and Session ownership.
+- `McpServerConfig(name, tool_namespace, limits, initialize_on_start, owns_session, origin)`: service identity, local tool namespace, Session ownership, and the `local_mcp` / `database_mcp` origin.
 - `McpServerCapabilities(tools, resources, prompts, completions, logging)`: `True/False/None` means declared support, explicit lack of support, or not yet negotiated, respectively.
 - `McpToolDefinition(name, description, input_schema, output_schema, annotations)`.
 - `McpResourceDefinition(uri, name, description, mime_type, size, metadata)`.

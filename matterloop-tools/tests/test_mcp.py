@@ -275,6 +275,7 @@ async def test_mcp_discovers_and_operates_tools_resources_and_prompts() -> None:
     assert resource.contents[0].text == "企业指南"
     assert prompt.messages[0].content[0].text == "总结 MCP"
     assert result.content == 'remote-result\n{"source":"fake"}'
+    assert result.structured_content == {"source": "fake"}
     assert result.metadata == {
         "mcp_server": "knowledge",
         "mcp_tool": "echo.text",
@@ -536,6 +537,7 @@ async def test_mcp_streams_large_structured_json_within_character_budget(
     assert len(result.content) == 48
     assert result.content.startswith('{"payload":"yyyy')
     assert result.metadata["truncated"] is True
+    assert result.structured_content["payload"] == "y" * 2_000_000
 
 
 async def test_mcp_limits_empty_content_blocks_before_rendering() -> None:

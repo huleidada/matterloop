@@ -114,6 +114,7 @@ class McpServerRegistry:
                 server_name,
                 namespace,
                 definition,
+                origin=connection.config.origin,
                 max_result_characters=max_characters,
                 max_content_blocks=max_content_blocks,
                 catalog_token=catalog_token,

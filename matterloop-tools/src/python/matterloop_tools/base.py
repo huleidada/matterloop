@@ -146,10 +146,16 @@ class ToolResult:
     content: str
     is_error: bool = False
     metadata: Mapping[str, object] = field(default_factory=dict)
+    structured_content: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """冻结结果元数据。"""
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        object.__setattr__(
+            self,
+            "structured_content",
+            MappingProxyType(dict(self.structured_content)),
+        )
 
 
 ToolInvocation = Callable[[], Awaitable[ToolResult]]

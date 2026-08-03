@@ -1418,7 +1418,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "matterloop-tools"
-version = "0.2.3"
+version = "0.2.4"
 source = { editable = "matterloop-tools" }
 dependencies = [
     { name = "httpx" },

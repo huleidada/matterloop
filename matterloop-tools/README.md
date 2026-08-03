@@ -66,7 +66,7 @@ class Tool(Protocol):
 - `ToolSpec` 描述模型可见接口以及注册表必须执行的副作用分类。
 - `ToolContext` 携带授权、关联信息和不可由业务授权器提升的访问范围；metadata 只接受
   JSON-compatible 值，并在调用前递归快照。
-- `ToolResult(content, is_error, metadata)` 返回文本结果和安全诊断。
+- `ToolResult(content, is_error, metadata, structured_content)` 返回文本结果、结构化结果和安全诊断。
 
 | DTO | 字段 | 类型 | 必填 / 默认值 | 行为与安全约束 |
 | --- | --- | --- | --- | --- |
@@ -93,6 +93,20 @@ class Tool(Protocol):
 
 Schema 用于发现，不代表注册表会自动执行 JSON Schema。自定义工具必须在本地校验全部参数；模型
 侧的 strict tools 也不能替代授权。
+
+### 能力契约与本地装饰器
+
+`CapabilitySpec` 用稳定的 `capability_id`、操作、业务对象、结果类型和完成证据描述工具能力；
+`ToolDescriptor` 额外保留 `local`、`local_mcp`、`database_mcp` 等来源以及全局工具引用。
+`ToolRegistry.descriptors()` 返回统一目录，`select_by_capability()` 可以在模型看到工具前按能力收敛。
+
+本地 Python 函数可通过小写 `@tool(...)` 适配为 `Tool`，并通过 `@capability(...)` 声明能力。
+公共 `Tool` 名称继续保留为结构协议，不兼作装饰器。`@mcp_tool(...)` 只为本地 MCP 函数生成
+MatterLoop namespaced annotations；它不建立 MCP Server，也不接管 transport 或 Session。
+
+MCP 工具可在 annotations 的 `matterloop/capability` 字段声明同一份能力契约。发现后的
+`McpToolAdapter` 会保留该契约、输出 Schema、来源以及结构化返回值，使本地工具和数据库 MCP
+经过同一个能力目录与调用入口。
 
 `register(tool, replace=False)`、`replace(name, tool)`、`unregister(name)` 和 `aclose()` 负责生命周期。
 新实现启动成功后才会替换；已经开始的调用继续使用旧实例，最后一个调用退出后旧实例才关闭。
@@ -160,7 +174,7 @@ async with stdio_client(params) as streams:
 <summary>MCP 数据结构与限制速查</summary>
 
 - `McpLimits(request_timeout_seconds, initialize_timeout_seconds, close_timeout_seconds, max_pages, max_items, max_content_blocks, max_result_characters)`：默认 30/15/10 秒、20 页、1,000 项、256 个内容块和 200,000 字符。
-- `McpServerConfig(name, tool_namespace, limits, initialize_on_start, owns_session)`：服务标识、本地工具命名空间和 Session 所有权。
+- `McpServerConfig(name, tool_namespace, limits, initialize_on_start, owns_session, origin)`：服务标识、本地工具命名空间、Session 所有权和 `local_mcp` / `database_mcp` 来源。
 - `McpServerCapabilities(tools, resources, prompts, completions, logging)`：`True/False/None` 分别表示声明支持、明确不支持和尚未协商。
 - `McpToolDefinition(name, description, input_schema, output_schema, annotations)`。
 - `McpResourceDefinition(uri, name, description, mime_type, size, metadata)`。

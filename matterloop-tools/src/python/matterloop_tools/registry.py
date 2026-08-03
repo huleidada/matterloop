@@ -27,6 +27,7 @@ from matterloop_tools.base import (
     ToolResult,
     ToolSpec,
 )
+from matterloop_tools.capabilities import ToolDescriptor, descriptor_for
 from matterloop_tools.errors import (
     ToolInputError,
     ToolNotFoundError,
@@ -116,6 +117,32 @@ class ToolRegistry:
             事务快照。需要目录级原子性的能力应由上层注册表提供不可变目录版本。
         """
         return tuple(self._components.get(name).spec for name in self._components.names())
+
+    def descriptors(self) -> tuple[ToolDescriptor, ...]:
+        """返回包含来源和能力语义的稳定排序工具目录。"""
+        return tuple(
+            descriptor_for(self._components.get(name))
+            for name in self._components.names()
+        )
+
+    def select_by_capability(
+        self,
+        *,
+        capability_id: str | None = None,
+        operation: str | None = None,
+        entity: str | None = None,
+    ) -> tuple[ToolDescriptor, ...]:
+        """按稳定能力语义选择工具，不依赖具体工具名。"""
+        return tuple(
+            descriptor
+            for descriptor in self.descriptors()
+            if descriptor.capability is not None
+            and descriptor.capability.matches(
+                capability_id=capability_id,
+                operation=operation,
+                entity=entity,
+            )
+        )
 
     async def invoke(
         self,

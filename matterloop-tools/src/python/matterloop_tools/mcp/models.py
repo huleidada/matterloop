@@ -8,6 +8,7 @@ from enum import Enum
 from math import isfinite
 from types import MappingProxyType
 
+from matterloop_tools.capabilities import ToolOrigin
 from matterloop_tools.mcp.errors import McpConfigurationError
 
 
@@ -295,6 +296,7 @@ class McpServerConfig:
     limits: McpLimits = field(default_factory=McpLimits)
     initialize_on_start: bool = True
     owns_session: bool = False
+    origin: ToolOrigin = ToolOrigin.LOCAL_MCP
 
     def __post_init__(self) -> None:
         if (
@@ -304,6 +306,13 @@ class McpServerConfig:
             or not self.tool_namespace.strip()
         ):
             raise McpConfigurationError("MCP server name and tool namespace must not be empty")
+        try:
+            origin = ToolOrigin(self.origin)
+        except ValueError as exc:
+            raise McpConfigurationError("MCP server origin must be a valid ToolOrigin") from exc
+        if origin not in {ToolOrigin.LOCAL_MCP, ToolOrigin.DATABASE_MCP}:
+            raise McpConfigurationError("MCP server origin must be local_mcp or database_mcp")
+        object.__setattr__(self, "origin", origin)
         if not isinstance(self.limits, McpLimits):
             raise McpConfigurationError("MCP server limits must be McpLimits")
         if type(self.initialize_on_start) is not bool or type(self.owns_session) is not bool:
