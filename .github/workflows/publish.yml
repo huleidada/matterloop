@@ -16,6 +16,7 @@ concurrency:
 jobs:
   build:
     name: Build and verify release
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -152,6 +153,190 @@ jobs:
           path: release-dist/
           if-no-files-found: error
           retention-days: 30
+
+  build_tools:
+    name: Build and verify matterloop-tools 0.2.4
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - name: Check out the release source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Resolve and validate the package version
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --check
+          version="$(
+            python -c 'import tomllib; print(tomllib.load(open("matterloop-tools/pyproject.toml", "rb"))["project"]["version"])'
+          )"
+          test "${version}" = "0.2.4"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install the locked tools development environment
+        run: |
+          uv sync --package matterloop-tools --extra mcp --extra dev --dev --locked
+          uv pip check --python .venv/bin/python
+
+      - name: Run matterloop-tools quality gates
+        run: |
+          uv run ruff check matterloop-tools
+          uv run pytest matterloop-tools/tests
+
+      - name: Build matterloop-tools
+        shell: bash
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          rm -rf release-dist
+          mkdir release-dist
+          uv build matterloop-tools --out-dir release-dist
+          uv run twine check release-dist/*
+          test "$(find release-dist -maxdepth 1 -type f -name "matterloop_tools-${VERSION}-*.whl" | wc -l | tr -d ' ')" = "1"
+          test "$(find release-dist -maxdepth 1 -type f -name "matterloop_tools-${VERSION}.tar.gz" | wc -l | tr -d ' ')" = "1"
+
+      - name: Verify the wheel in a clean environment
+        shell: bash
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv venv .release-tools-test --python 3.13
+          uv pip install \
+            --python .release-tools-test/bin/python \
+            --find-links release-dist \
+            "matterloop-tools[mcp]==${VERSION}"
+          uv pip check --python .release-tools-test/bin/python
+          .release-tools-test/bin/python -I -c \
+            'import importlib.metadata, matterloop_tools; assert importlib.metadata.version("matterloop-tools") == "0.2.4"'
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-dist
+          sha256sum -- * > SHA256SUMS
+
+      - name: Upload the verified tools bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: matterloop-tools-${{ steps.package.outputs.version }}
+          path: release-dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish_tools:
+    name: Publish matterloop-tools to PyPI
+    needs: build_tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi-tools
+      url: https://pypi.org/project/matterloop-tools/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download the verified tools bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: matterloop-tools-${{ needs.build_tools.outputs.version }}
+          path: release-dist
+
+      - name: Select the distribution artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir package-dist
+          cp release-dist/matterloop_tools-*.whl package-dist/
+          cp release-dist/matterloop_tools-*.tar.gz package-dist/
+          test "$(find package-dist -maxdepth 1 -type f | wc -l | tr -d ' ')" = "2"
+
+      - name: Publish with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          packages-dir: package-dist
+          attestations: true
+          print-hash: true
+          skip-existing: true
+          verbose: true
+
+  verify_tools:
+    name: Verify matterloop-tools from PyPI
+    needs:
+      - build_tools
+      - publish_tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.13"
+          enable-cache: false
+
+      - name: Install and verify the public package
+        shell: bash
+        env:
+          VERSION: ${{ needs.build_tools.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv venv .pypi-tools-test --python 3.13
+          for attempt in {1..12}; do
+            if uv pip install \
+              --python .pypi-tools-test/bin/python \
+              --index-url https://pypi.org/simple \
+              --refresh \
+              "matterloop-tools[mcp]==${VERSION}"; then
+              break
+            fi
+            if test "${attempt}" = "12"; then
+              echo "PyPI 在等待窗口内仍未提供 matterloop-tools==${VERSION}" >&2
+              exit 1
+            fi
+            sleep 10
+          done
+          uv pip check --python .pypi-tools-test/bin/python
+          .pypi-tools-test/bin/python -I -c \
+            'import importlib.metadata, matterloop_tools; assert importlib.metadata.version("matterloop-tools") == "0.2.4"'
+
+  release_tools:
+    name: Create the matterloop-tools GitHub Release
+    needs:
+      - build_tools
+      - verify_tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Create the package release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build_tools.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="matterloop-tools-v${VERSION}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            echo "${tag} 已存在，跳过重复创建。"
+            exit 0
+          fi
+          gh release create "${tag}" \
+            --target "${GITHUB_SHA}" \
+            --title "matterloop-tools ${VERSION}" \
+            --notes "独立发布 matterloop-tools ${VERSION}：增加统一工具能力契约、本地 Tool/MCP 装饰器、MCP 来源标识与结构化完成证据。"
 
   publish:
     name: Publish ${{ matrix.distribution }} to PyPI
