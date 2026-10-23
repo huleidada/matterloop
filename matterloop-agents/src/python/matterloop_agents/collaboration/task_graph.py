@@ -52,6 +52,8 @@ class TaskGraph:
             }
         else:
             state_by_id = {state.spec.task_id: state for state in states}
+            if len(state_by_id) != len(states):
+                raise InvalidTaskGraphError("restored states contain duplicate task identifiers")
             if set(state_by_id) != set(self._tasks):
                 raise InvalidTaskGraphError("restored states do not match task identifiers")
             if any(state.spec != self._tasks[task_id] for task_id, state in state_by_id.items()):
